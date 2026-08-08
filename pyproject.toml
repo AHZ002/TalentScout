@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "talentscout"
 version = "0.1.0"
 description = "Agentic AI platform for adaptive technical screening and candidate intelligence."
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.12,<3.13"
 
 dependencies = [
     "fastapi>=0.139,<0.140",
@@ -31,14 +31,14 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 src = ["backend/src", "backend/tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 strict = true
 mypy_path = ["backend/src"]
 
