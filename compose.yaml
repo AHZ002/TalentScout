@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: talentscout-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: talentscout
+      POSTGRES_USER: talentscout
+      POSTGRES_PASSWORD: talentscout
+    ports:
+      - "5432:5432"
+    volumes:
+      - talentscout_postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U talentscout -d talentscout"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  talentscout_postgres_data:

@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     )
     environment: Environment = "development"
     debug: bool = False
+    database_url: str = Field(
+        default="postgresql+psycopg://talentscout:talentscout@localhost:5432/talentscout",
+        min_length=1,
+    )
 
 
 @lru_cache(maxsize=1)

@@ -30,3 +30,9 @@ def test_invalid_environment_is_rejected(monkeypatch) -> None:
 
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_database_url_has_expected_driver() -> None:
+    settings = Settings()
+
+    assert settings.database_url.startswith("postgresql+psycopg://")

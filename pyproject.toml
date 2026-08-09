@@ -13,6 +13,9 @@ dependencies = [
     "pydantic>=2.13,<3",
     "pydantic-settings>=2.14,<3",
     "uvicorn[standard]>=0.35,<1",
+    "sqlalchemy>=2.0.51,<2.1",
+    "psycopg[binary]>=3.3,<4",
+    "alembic>=1.18.5,<2",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +31,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 asyncio_mode = "auto"
+markers = [
+    "integration: tests that require external services such as PostgreSQL",
+]
 
 [tool.ruff]
 line-length = 100
