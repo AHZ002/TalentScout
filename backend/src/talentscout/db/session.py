@@ -32,4 +32,9 @@ SessionFactory = async_sessionmaker(
 async def get_session() -> AsyncIterator[AsyncSession]:
     """Provide one database session for a request or operation."""
     async with SessionFactory() as session:
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise

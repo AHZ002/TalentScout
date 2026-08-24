@@ -33,6 +33,10 @@ class Job(Base):
         Text,
         nullable=False,
     )
+    company_context: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
     status: Mapped[JobStatus] = mapped_column(
         String(20),
         default=JobStatus.DRAFT,
