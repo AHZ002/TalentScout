@@ -1,3 +1,7 @@
+"""Business logic for managing company documents.
+
+Coordinates document storage and database operations.
+"""
 from uuid import UUID
 
 from talentscout.db.models.document import Document, DocumentStatus
@@ -38,7 +42,7 @@ class DocumentService:
             status=DocumentStatus.PENDING,
         )
 
-        return await self.repository.create(document)
+        return await self.repository.create(document) #This sends the Document object to the repository.The repository then saves it into the documents database table.
 
     async def get_document(self, document_id: UUID) -> Document | None:
         """Retrieve a document by ID."""

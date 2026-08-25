@@ -1,6 +1,8 @@
+'''provide an endpoint that tells you whether the backend is running.'''
+
 from typing import Final
 
-from fastapi import APIRouter
+from fastapi import APIRouter #lets you group related API endpoints together.
 from pydantic import BaseModel
 
 router = APIRouter(tags=["health"])
