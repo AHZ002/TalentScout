@@ -2,23 +2,27 @@
 
 Coordinates document storage and database operations.
 """
+
 from uuid import UUID
 
 from talentscout.db.models.document import Document, DocumentStatus
+from talentscout.documents.processor import DocumentProcessor
 from talentscout.jobs.repositories.document import DocumentRepository
 from talentscout.storage.base import StorageService
 
 
 class DocumentService:
-    """Contains business logic for company documents."""
+    """Handles storing and processing company documents."""
 
     def __init__(
         self,
         repository: DocumentRepository,
         storage: StorageService,
+        processor: DocumentProcessor,
     ) -> None:
         self.repository = repository
         self.storage = storage
+        self.processor = processor
 
     async def create_document(
         self,
@@ -27,7 +31,7 @@ class DocumentService:
         filename: str,
         content_type: str,
     ) -> Document:
-        """Store a document and create its database record."""
+        """Store a document and process its text."""
         storage_path = await self.storage.save(
             content=content,
             filename=filename,
@@ -39,10 +43,22 @@ class DocumentService:
             filename=filename,
             content_type=content_type,
             storage_path=storage_path,
-            status=DocumentStatus.PENDING,
+            status=DocumentStatus.PROCESSING,
         )
 
-        return await self.repository.create(document) #This sends the Document object to the repository.The repository then saves it into the documents database table.
+        try:
+            await self.processor.extract_text(
+                content=content,
+                content_type=content_type,
+            )
+            document.status = DocumentStatus.COMPLETED
+        except (UnicodeDecodeError, ValueError):
+            document.status = DocumentStatus.FAILED
+
+        return await self.repository.create(
+            document
+        )  # This sends the Document object to the repository.
+        # The repository then saves it into the documents database table.
 
     async def get_document(self, document_id: UUID) -> Document | None:
         """Retrieve a document by ID."""

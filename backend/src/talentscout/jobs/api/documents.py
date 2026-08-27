@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from talentscout.db.models.document import Document
 from talentscout.db.session import get_session
+from talentscout.documents.processors.basic import BasicDocumentProcessor
 from talentscout.jobs.repositories.document import DocumentRepository
 from talentscout.jobs.schemas.document import DocumentResponse
 from talentscout.jobs.services.document import DocumentService
@@ -24,9 +25,12 @@ def get_document_service(
     repository = DocumentRepository(session)
     storage = LocalStorageService(Path("storage/documents"))
 
+    processor = BasicDocumentProcessor()
+
     return DocumentService(
         repository=repository,
         storage=storage,
+        processor=processor,
     )
 
 

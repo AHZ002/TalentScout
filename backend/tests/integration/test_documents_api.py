@@ -47,7 +47,7 @@ async def test_create_and_get_job_document() -> None:
         assert document["job_id"] == job_id
         assert document["filename"] == "clinical_ai_guidelines.txt"
         assert document["content_type"] == "text/plain"
-        assert document["status"] == "pending"
+        assert document["status"] == "completed"
 
         get_response = await client.get(f"/jobs/{job_id}/documents/{document['id']}")
 
