@@ -6,8 +6,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from talentscout.db.models.document import Document
 from talentscout.db.session import get_session
+from talentscout.documents.chunker import DocumentChunker
 from talentscout.documents.processors.basic import BasicDocumentProcessor
+from talentscout.embeddings.gemini import GeminiEmbeddingService
 from talentscout.jobs.repositories.document import DocumentRepository
+from talentscout.jobs.repositories.document_chunk import DocumentChunkRepository
 from talentscout.jobs.schemas.document import DocumentResponse
 from talentscout.jobs.services.document import DocumentService
 from talentscout.storage.local import LocalStorageService
@@ -27,10 +30,19 @@ def get_document_service(
 
     processor = BasicDocumentProcessor()
 
+    chunker = DocumentChunker()
+    chunk_repository = DocumentChunkRepository(session)
+
+    # Provides semantic embeddings for document chunks.
+    embedding_service = GeminiEmbeddingService()
+
     return DocumentService(
         repository=repository,
         storage=storage,
         processor=processor,
+        chunker=chunker,
+        chunk_repository=chunk_repository,
+        embedding_service=embedding_service,
     )
 
 

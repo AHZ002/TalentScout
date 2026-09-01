@@ -29,6 +29,26 @@ class Settings(BaseSettings):
         default="postgresql+psycopg://talentscout:talentscout@localhost:5432/talentscout",
         min_length=1,
     )
+    # API key used to generate document embeddings with Gemini.
+    gemini_api_key: str = Field(
+        default="",
+    )
+
+    # Embedding model used for semantic document retrieval.
+    embedding_model: str = Field(
+        default="gemini-embedding-001",
+    )
+
+    # Must match the VECTOR dimension in the document_chunks table.
+    embedding_dimensions: int = Field(
+        default=1536,
+        ge=1,
+    )
+    # API key used by the interview agents to access the Groq LLM.
+    groq_api_key: str = Field(default="")
+
+    # LLM used for interview question generation and later agent tasks.
+    llm_model: str = Field(default="openai/gpt-oss-20b")
 
 
 @lru_cache(maxsize=1)

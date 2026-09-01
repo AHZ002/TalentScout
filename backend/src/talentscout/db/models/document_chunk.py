@@ -3,9 +3,10 @@ from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, ForeignKey, Integer, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from talentscout.db.base import Base
+from talentscout.db.models.document import Document
 
 
 class DocumentChunk(Base):
@@ -22,6 +23,9 @@ class DocumentChunk(Base):
         nullable=False,
         index=True,
     )
+    # Links this chunk back to the original uploaded document.
+    document: Mapped["Document"] = relationship()
+
     chunk_index: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
