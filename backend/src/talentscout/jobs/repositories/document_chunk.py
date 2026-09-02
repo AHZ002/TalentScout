@@ -24,6 +24,17 @@ class DocumentChunkRepository:
         await self.session.flush()
         return chunks
 
+    async def list_without_embeddings(self) -> list[DocumentChunk]:
+        """Return document chunks that do not have an embedding yet."""
+        statement = (
+            select(DocumentChunk)
+            .where(DocumentChunk.embedding.is_(None))
+            .order_by(DocumentChunk.created_at)
+        )
+
+        result = await self.session.scalars(statement)
+        return list(result)
+
     async def search(
         self,
         job_id: UUID,

@@ -10,7 +10,7 @@ from talentscout.llm.service import LLMService
 
 
 class InterviewerAgent:
-    """Generate an interview question using job-specific retrieved context."""
+    """Generate an interview question using job and document context."""
 
     def __init__(
         self,
@@ -18,7 +18,7 @@ class InterviewerAgent:
         llm: LLMService,
     ) -> None:
         """Initialize the interviewer with retrieval and LLM services."""
-        # Retrieval provides company and job-specific context.
+        # Retrieval provides relevant company-document information.
         self.retriever = retriever
 
         # The LLM service handles communication with the configured model.
@@ -30,25 +30,35 @@ class InterviewerAgent:
     ) -> InterviewState:
         """Retrieve relevant context and generate the next interview question."""
         job_id = state["job_id"]
+        job_description = state["job_description"]
+        candidate_answer = state.get("candidate_answer", "")
 
-        # Use the candidate's previous answer for contextual retrieval.
-        # For the first question, use a general technical-screening query.
-        query = state.get(
-            "candidate_answer",
-            "technical requirements, systems, technologies, and domain knowledge",
-        )
+        # For the first question, retrieve documents using the JD.
+        # For later questions, use the JD together with the candidate's
+        # previous answer so retrieval remains relevant to the job and
+        # adapts to what the candidate has already discussed.
+        if candidate_answer:
+            retrieval_query = (
+                f"Job requirements:\n{job_description}\n\n"
+                f"Candidate's previous answer:\n{candidate_answer}"
+            )
+        else:
+            retrieval_query = job_description
 
         chunks = await self.retriever.retrieve(
             job_id=job_id,
-            query=query,
+            query=retrieval_query,
             limit=5,
         )
 
-        context = [chunk.text for chunk in chunks]
+        # The LLM receives document text, not the embedding vectors.
+        retrieved_context = [chunk.text for chunk in chunks]
 
         prompt = self._build_prompt(
-            context=context,
-            candidate_answer=state.get("candidate_answer", ""),
+            job_description=job_description,
+            company_context=state.get("company_context"),
+            retrieved_context=retrieved_context,
+            candidate_answer=candidate_answer,
         )
 
         # Generate the question through the provider-independent LLM service.
@@ -56,7 +66,10 @@ class InterviewerAgent:
             system_prompt=(
                 "You are TalentScout's technical interviewer. "
                 "Generate one clear technical interview question. "
-                "Use the supplied company and job context. "
+                "Base the question on the job description, optional company "
+                "context, and relevant retrieved document context. "
+                "Use the candidate's previous answer when available to make "
+                "the next question relevant and appropriately challenging. "
                 "Do not invent company-specific facts."
             ),
             user_prompt=prompt,
@@ -64,23 +77,29 @@ class InterviewerAgent:
 
         return {
             **state,
-            "retrieved_context": context,
+            "retrieved_context": retrieved_context,
             "current_question": question,
         }
 
     @staticmethod
     def _build_prompt(
-        context: list[str],
+        job_description: str,
+        company_context: str | None,
+        retrieved_context: list[str],
         candidate_answer: str,
     ) -> str:
-        """Build the interviewer prompt from context and candidate state."""
-        # Combine retrieved chunks into a single context section for the LLM.
-        context_text = "\n\n".join(context)
+        """Build the interviewer prompt from all available interview context."""
+        # Combine retrieved document chunks into a single context section.
+        document_text = "\n\n".join(retrieved_context)
 
         return (
-            f"Relevant company/job context:\n{context_text}\n\n"
+            f"Job description:\n{job_description}\n\n"
+            f"Company/project context:\n"
+            f"{company_context or 'No additional company context provided.'}\n\n"
+            f"Relevant document context:\n"
+            f"{document_text or 'No relevant document context found.'}\n\n"
             f"Candidate's previous answer:\n"
-            f"{candidate_answer or 'No previous answer.'}\n\n"
+            f"{candidate_answer or 'No previous answer; this is the first question.'}\n\n"
             "Generate the next technical interview question."
         )
 
@@ -99,7 +118,7 @@ def build_interview_graph(
     # Define the shared interview state used by the graph.
     graph = StateGraph(InterviewState)
 
-    # The first graph node retrieves context and generates a question.
+    # The interviewer retrieves relevant context and generates a question.
     graph.add_node(
         "interviewer",
         interviewer.generate_question,

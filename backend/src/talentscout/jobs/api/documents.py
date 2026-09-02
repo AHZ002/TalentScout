@@ -8,7 +8,7 @@ from talentscout.db.models.document import Document
 from talentscout.db.session import get_session
 from talentscout.documents.chunker import DocumentChunker
 from talentscout.documents.processors.basic import BasicDocumentProcessor
-from talentscout.embeddings.gemini import GeminiEmbeddingService
+from talentscout.embeddings.jina import JinaEmbeddingService
 from talentscout.jobs.repositories.document import DocumentRepository
 from talentscout.jobs.repositories.document_chunk import DocumentChunkRepository
 from talentscout.jobs.schemas.document import DocumentResponse
@@ -34,7 +34,7 @@ def get_document_service(
     chunk_repository = DocumentChunkRepository(session)
 
     # Provides semantic embeddings for document chunks.
-    embedding_service = GeminiEmbeddingService()
+    embedding_service = JinaEmbeddingService()
 
     return DocumentService(
         repository=repository,

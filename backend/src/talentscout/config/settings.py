@@ -29,19 +29,17 @@ class Settings(BaseSettings):
         default="postgresql+psycopg://talentscout:talentscout@localhost:5432/talentscout",
         min_length=1,
     )
-    # API key used to generate document embeddings with Gemini.
-    gemini_api_key: str = Field(
-        default="",
-    )
+    # API key used to generate document embeddings with Jina AI.
+    jina_api_key: str = Field(default="")
 
     # Embedding model used for semantic document retrieval.
     embedding_model: str = Field(
-        default="gemini-embedding-001",
+        default="jina-embeddings-v5-text-small",
     )
 
     # Must match the VECTOR dimension in the document_chunks table.
     embedding_dimensions: int = Field(
-        default=1536,
+        default=1024,
         ge=1,
     )
     # API key used by the interview agents to access the Groq LLM.

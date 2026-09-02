@@ -5,6 +5,8 @@ Coordinates document storage and database operations.
 
 from uuid import UUID
 
+import httpx
+
 from talentscout.db.models.document import Document, DocumentStatus
 from talentscout.db.models.document_chunk import DocumentChunk
 from talentscout.documents.chunker import DocumentChunker
@@ -65,15 +67,14 @@ class DocumentService:
             # Split the extracted text into retrieval-ready pieces.
             chunks = self.chunker.chunk(extracted_text)
 
-            document.status = DocumentStatus.COMPLETED
+            # Persist the document while processing is still in progress.
+            # This allows us to retain a FAILED document record if embedding fails.
+            document = await self.repository.create(document)
 
-            document = await self.repository.create(
-                document
-            )  # This sends the Document object to the repository.
-            # The repository then saves it into the documents database table.
-
-            # Generate vectors for all chunks before storing them.
-            embeddings = await self.embedding_service.embed_many([chunk.text for chunk in chunks])
+            # Generate vectors for all chunks before marking processing as complete.
+            embeddings = await self.embedding_service.embed_many(
+                [chunk.text for chunk in chunks]
+            )
 
             # Store each chunk together with its semantic embedding.
             document_chunks = [
@@ -89,11 +90,39 @@ class DocumentService:
             if document_chunks:
                 await self.chunk_repository.create_many(document_chunks)
 
+            # Only mark the document complete after all chunks and embeddings succeed.
+            document.status = DocumentStatus.COMPLETED
+
             return document
 
-        except (UnicodeDecodeError, ValueError):
+        except (
+            UnicodeDecodeError,
+            ValueError,
+            RuntimeError,
+            httpx.HTTPError,
+        ):
+            # Mark the document as failed when an expected external-processing
+            # or document-processing error occurs.
             document.status = DocumentStatus.FAILED
             return await self.repository.create(document)
+
+    async def reembed_missing_chunks(self) -> int:
+        """Generate embeddings for existing chunks that do not have one."""
+        chunks = await self.chunk_repository.list_without_embeddings()
+
+        if not chunks:
+            return 0
+
+        # Generate embeddings through the provider-independent abstraction.
+        embeddings = await self.embedding_service.embed_many(
+            [chunk.text for chunk in chunks]
+        )
+
+        # Attach each generated vector to its existing chunk.
+        for chunk, embedding in zip(chunks, embeddings, strict=True):
+            chunk.embedding = embedding
+
+        return len(chunks)    
 
     async def get_document(self, document_id: UUID) -> Document | None:
         """Retrieve a document by ID."""
