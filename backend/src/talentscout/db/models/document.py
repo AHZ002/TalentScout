@@ -18,7 +18,7 @@ class DocumentStatus(StrEnum):
 
 
 class Document(Base):
-    """A company-provided document associated with a hiring job."""
+    """An optional Additional Interview Guidance document for a hiring job."""
 
     __tablename__ = "documents"
 

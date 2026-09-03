@@ -1,4 +1,4 @@
-"""Semantic retrieval of company-document context for a hiring job."""
+"""Semantic retrieval of Additional Interview Guidance for a hiring job."""
 
 from uuid import UUID
 
@@ -8,7 +8,7 @@ from talentscout.jobs.repositories.document_chunk import DocumentChunkRepository
 
 
 class DocumentRetriever:
-    """Find the most relevant company-document chunks for a query."""
+    """Find the most relevant Additional Interview Guidance chunks for a job."""
 
     def __init__(
         self,

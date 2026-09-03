@@ -33,7 +33,10 @@ class Job(Base):
         Text,
         nullable=False,
     )
-    company_context: Mapped[str | None] = mapped_column(
+    # Retained only so existing values can be audited and migrated safely.
+    # New onboarding and interview workflows must not use this legacy data.
+    legacy_company_context: Mapped[str | None] = mapped_column(
+        "company_context",
         Text,
         nullable=True,
     )

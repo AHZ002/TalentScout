@@ -1,10 +1,14 @@
-"""Tests for semantic retrieval of company-document context."""
+"""Tests for semantic retrieval of Additional Interview Guidance."""
 
-from uuid import uuid4
+from typing import cast
+from uuid import UUID, uuid4
 
 import pytest
 
+from talentscout.db.models.document_chunk import DocumentChunk
 from talentscout.documents.retriever import DocumentRetriever
+from talentscout.embeddings.service import EmbeddingService
+from talentscout.jobs.repositories.document_chunk import DocumentChunkRepository
 
 
 class FakeEmbeddingService:
@@ -19,16 +23,16 @@ class FakeChunkRepository:
     """Records retrieval requests without requiring PostgreSQL."""
 
     def __init__(self) -> None:
-        self.job_id = None
-        self.embedding = None
-        self.limit = None
+        self.job_id: UUID | None = None
+        self.embedding: list[float] | None = None
+        self.limit: int | None = None
 
     async def search(
         self,
-        job_id,
+        job_id: UUID,
         embedding: list[float],
         limit: int,
-    ) -> list:
+    ) -> list[DocumentChunk]:
         """Capture the search parameters and return no chunks."""
         self.job_id = job_id
         self.embedding = embedding
@@ -41,7 +45,10 @@ async def test_retriever_embeds_query_and_searches_repository() -> None:
     """Verify that retrieval embeds the query and searches the repository."""
     repository = FakeChunkRepository()
     embedding_service = FakeEmbeddingService()
-    retriever = DocumentRetriever(repository, embedding_service)
+    retriever = DocumentRetriever(
+        cast(DocumentChunkRepository, repository),
+        cast(EmbeddingService, embedding_service),
+    )
 
     job_id = uuid4()
 

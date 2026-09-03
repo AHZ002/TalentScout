@@ -13,7 +13,7 @@ def test_settings_defaults() -> None:
     assert settings.debug is False
 
 
-def test_settings_load_from_environment(monkeypatch) -> None:
+def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TALENTSCOUT_APP_NAME", "Test API")
     monkeypatch.setenv("TALENTSCOUT_ENVIRONMENT", "testing")
     monkeypatch.setenv("TALENTSCOUT_DEBUG", "true")
@@ -25,7 +25,7 @@ def test_settings_load_from_environment(monkeypatch) -> None:
     assert settings.debug is True
 
 
-def test_invalid_environment_is_rejected(monkeypatch) -> None:
+def test_invalid_environment_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TALENTSCOUT_ENVIRONMENT", "invalid")
 
     with pytest.raises(ValidationError):

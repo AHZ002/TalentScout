@@ -14,7 +14,7 @@ class DocumentCreate(BaseModel):
 
 
 class DocumentResponse(BaseModel):
-    """Data returned by the API for a company document."""
+    """Data returned by the API for an Additional Interview Guidance document."""
 
     model_config = ConfigDict(from_attributes=True)
 

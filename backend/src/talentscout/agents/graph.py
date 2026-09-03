@@ -18,7 +18,7 @@ class InterviewerAgent:
         llm: LLMService,
     ) -> None:
         """Initialize the interviewer with retrieval and LLM services."""
-        # Retrieval provides relevant company-document information.
+        # Retrieval provides relevant Additional Interview Guidance.
         self.retriever = retriever
 
         # The LLM service handles communication with the configured model.
@@ -56,7 +56,6 @@ class InterviewerAgent:
 
         prompt = self._build_prompt(
             job_description=job_description,
-            company_context=state.get("company_context"),
             retrieved_context=retrieved_context,
             candidate_answer=candidate_answer,
         )
@@ -66,8 +65,8 @@ class InterviewerAgent:
             system_prompt=(
                 "You are TalentScout's technical interviewer. "
                 "Generate one clear technical interview question. "
-                "Base the question on the job description, optional company "
-                "context, and relevant retrieved document context. "
+                "Base the question on the job description and relevant "
+                "retrieved Additional Interview Guidance. "
                 "Use the candidate's previous answer when available to make "
                 "the next question relevant and appropriately challenging. "
                 "Do not invent company-specific facts."
@@ -84,7 +83,6 @@ class InterviewerAgent:
     @staticmethod
     def _build_prompt(
         job_description: str,
-        company_context: str | None,
         retrieved_context: list[str],
         candidate_answer: str,
     ) -> str:
@@ -94,10 +92,8 @@ class InterviewerAgent:
 
         return (
             f"Job description:\n{job_description}\n\n"
-            f"Company/project context:\n"
-            f"{company_context or 'No additional company context provided.'}\n\n"
-            f"Relevant document context:\n"
-            f"{document_text or 'No relevant document context found.'}\n\n"
+            f"Relevant Additional Interview Guidance:\n"
+            f"{document_text or 'No relevant guidance was retrieved.'}\n\n"
             f"Candidate's previous answer:\n"
             f"{candidate_answer or 'No previous answer; this is the first question.'}\n\n"
             "Generate the next technical interview question."

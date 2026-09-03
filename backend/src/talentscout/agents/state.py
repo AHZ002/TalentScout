@@ -13,9 +13,6 @@ class InterviewState(TypedDict, total=False):
     # The job description defines the skills and requirements being assessed.
     job_description: str
 
-    # Optional additional information about the company, team, or project.
-    company_context: str | None
-
     # Candidate's latest answer, when available.
     candidate_answer: str
 

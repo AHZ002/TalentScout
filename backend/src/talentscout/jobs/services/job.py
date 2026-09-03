@@ -16,7 +16,6 @@ class JobService:
         job = Job(
             title=data.title,
             description=data.description,
-            company_context=data.company_context,
         )
 
         return await self.repository.create(job)

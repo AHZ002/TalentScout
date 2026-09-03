@@ -8,9 +8,10 @@ from talentscout.db.models.job import JobStatus
 class JobCreate(BaseModel):
     """Data required to create a new hiring job."""
 
+    model_config = ConfigDict(extra="forbid")
+
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(min_length=1)
-    company_context: str | None = None
 
 
 class JobResponse(BaseModel):
@@ -21,5 +22,4 @@ class JobResponse(BaseModel):
     id: UUID
     title: str
     description: str
-    company_context: str | None
     status: JobStatus

@@ -1,4 +1,4 @@
-"""Business logic for managing company documents.
+"""Business logic for managing Additional Interview Guidance documents.
 
 Coordinates document storage and database operations.
 """
@@ -18,7 +18,7 @@ from talentscout.storage.base import StorageService
 
 
 class DocumentService:
-    """Handles storing and processing company documents."""
+    """Handles storing and processing Additional Interview Guidance."""
 
     def __init__(
         self,
@@ -36,14 +36,14 @@ class DocumentService:
         self.chunk_repository = chunk_repository
         self.embedding_service = embedding_service
 
-    async def create_document(
+    async def create_guidance_document(
         self,
         job_id: UUID,
         content: bytes,
         filename: str,
         content_type: str,
     ) -> Document:
-        """Store a document and process its text."""
+        """Store an Additional Interview Guidance document and process its text."""
         storage_path = await self.storage.save(
             content=content,
             filename=filename,
@@ -124,10 +124,10 @@ class DocumentService:
 
         return len(chunks)    
 
-    async def get_document(self, document_id: UUID) -> Document | None:
-        """Retrieve a document by ID."""
+    async def get_guidance_document(self, document_id: UUID) -> Document | None:
+        """Retrieve an Additional Interview Guidance document by ID."""
         return await self.repository.get_by_id(document_id)
 
-    async def list_job_documents(self, job_id: UUID) -> list[Document]:
-        """Retrieve all documents belonging to a hiring job."""
+    async def list_guidance_documents(self, job_id: UUID) -> list[Document]:
+        """Retrieve all Additional Interview Guidance for a hiring job."""
         return await self.repository.list_by_job(job_id)
