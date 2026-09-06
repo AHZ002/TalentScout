@@ -21,6 +21,21 @@ Build a genuinely working system for real users—not a demo or fake implementat
 * Mention future scalability concerns briefly, but solve them now only when necessary.
 * Never claim something works without appropriate verification.
 
+### Code Quality & Implementation Discipline
+
+- Keep each class/function focused on one clear responsibility.
+- Prefer small, incremental changes. Do not refactor unrelated code while implementing a feature.
+- Before making changes, identify the exact files that need to change and why.
+- Avoid `Any` unless there is a clear technical reason and no practical typed alternative.
+- Maintain strict typing and ensure new code passes Ruff and Mypy.
+- Use Pydantic/typed schemas for important LLM inputs and outputs rather than relying on unrestricted strings where structured data is required.
+- Keep deterministic capabilities such as retrieval, embeddings, database access, and validation separate from LLM reasoning/agent responsibilities.
+- Do not create agents merely to increase the agent count. Each agent must have a meaningful reasoning responsibility.
+- Do not prematurely implement future architecture. Build the smallest production-quality increment that fits the current stage.
+- When a limitation exists because a required component has not yet been implemented, document it rather than adding a workaround that obscures the architecture.
+- After meaningful changes, run relevant tests and quality checks before moving forward.
+- Explain important implementation decisions so I understand the code rather than treating Codex as a black box.
+
 ## Implementation Workflow
 
 For every meaningful implementation step:
