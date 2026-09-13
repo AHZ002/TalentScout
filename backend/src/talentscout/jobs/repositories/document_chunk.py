@@ -35,6 +35,19 @@ class DocumentChunkRepository:
         result = await self.session.scalars(statement)
         return list(result)
 
+    async def has_chunks_for_job(self, job_id: UUID) -> bool:
+        """Return whether a job has any Additional Interview Guidance chunks."""
+        statement = (
+            select(DocumentChunk.id)
+            .join(DocumentChunk.document)
+            .where(DocumentChunk.document.has(job_id=job_id))
+            .limit(1)
+        )
+
+        result = await self.session.execute(statement)
+
+        return result.scalar_one_or_none() is not None        
+
     async def search(
         self,
         job_id: UUID,

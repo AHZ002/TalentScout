@@ -32,6 +32,11 @@ class DocumentRetriever:
         if not query.strip():
             raise ValueError("Retrieval query cannot be empty")
 
+        # Skip embedding generation entirely when the job has no
+        # Additional Interview Guidance to retrieve.
+        if not await self.repository.has_chunks_for_job(job_id):
+            return []
+
         # Use the same embedding model that was used for document chunks.
         query_embedding = await self.embedding_service.embed(query)
 
