@@ -43,10 +43,16 @@ def test_question_prompt_uses_job_guidance_and_role_competencies() -> None:
     )
 
     prompt = InterviewerAgent._build_prompt(
-        job_description="Build reliable PostgreSQL-backed services.",
+        job_description=(
+            "Build reliable PostgreSQL-backed services."
+        ),
         role_competency_analysis=role_competency_analysis,
-        retrieved_context=["Assess connection-pool sizing and failure handling."],
-        candidate_answer="I configured a bounded connection pool.",
+        retrieved_context=[
+            "Assess connection-pool sizing and failure handling.",
+        ],
+        candidate_answer="No previous answer yet.",
+        interview_history=[],
+        answer_evaluation=None,
     )
 
     assert "Required role competencies" in prompt

@@ -5,6 +5,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from talentscout.agents.answer_evaluation import (
+    AnswerEvaluation,
     AnswerEvaluationAgent,
     AnswerEvaluationRequest,
 )
@@ -77,6 +78,8 @@ class InterviewerAgent:
         job_description = state["job_description"]
         candidate_answer = state.get("candidate_answer", "")
         role_competency_analysis = state["role_competency_analysis"]
+        interview_history = state.get("interview_history", [])
+        answer_evaluation = state.get("answer_evaluation")
 
         # For the first question, retrieve documents using the JD.
         # For later questions, use the JD together with the candidate's
@@ -107,6 +110,8 @@ class InterviewerAgent:
             role_competency_analysis=role_competency_analysis,
             retrieved_context=retrieved_context,
             candidate_answer=candidate_answer,
+            interview_history=interview_history,
+            answer_evaluation=answer_evaluation,
         )
 
         # Generate the question through the provider-independent LLM service.
@@ -114,8 +119,12 @@ class InterviewerAgent:
             system_prompt=(
                 "You are TalentScout's technical interviewer. "
                 "Generate one clear technical interview question. "
-                "Base the question on the job description and relevant "
-                "retrieved Additional Interview Guidance. "
+                "Base the question on the job description, role competencies, "
+                "relevant retrieved Additional Interview Guidance, interview "
+                "history, and the latest answer evaluation. "
+                "Adapt the next question to the candidate's demonstrated "
+                "strengths and remaining gaps. Prefer probing an unresolved "
+                "competency or gap over repeating a previously covered area. "
                 "Use the candidate's previous answer when available to make "
                 "the next question relevant and appropriately challenging. "
                 "Do not invent company-specific facts."
@@ -153,20 +162,52 @@ class InterviewerAgent:
         role_competency_analysis: RoleCompetencyAnalysis,
         retrieved_context: list[str],
         candidate_answer: str,
+        interview_history: list,
+        answer_evaluation: AnswerEvaluation | None,
     ) -> str:
-        """Build the interviewer prompt from all available interview context."""
-        # Combine retrieved document chunks into a single context section.
+        """Build the interviewer prompt from the complete interview context."""
+        # Combine retrieved guidance chunks into a single context section.
         document_text = "\n\n".join(retrieved_context)
+
+        # Serialize the structured role analysis so the interviewer can
+        # select questions against explicit competencies and priorities.
         competency_text = role_competency_analysis.model_dump_json(indent=2)
+
+        # Serialize completed turns so the interviewer knows what has
+        # already been discussed and avoids asking redundant questions.
+        history_text = (
+            "\n\n".join(
+                (
+                    f"Question: {turn['question']}\n"
+                    f"Candidate answer: {turn['candidate_answer']}\n"
+                    f"Evaluation: "
+                    f"{turn['evaluation'].model_dump_json(indent=2)}"
+                )
+                for turn in interview_history
+            )
+            or "No completed interview turns yet."
+        )
+
+        # Include the latest evaluation separately because it is the most
+        # important signal for deciding what the next question should probe.
+        evaluation_text = (
+            answer_evaluation.model_dump_json(indent=2)
+            if answer_evaluation is not None
+            else "No previous answer has been evaluated yet."
+        )
 
         return (
             f"Job description:\n{job_description}\n\n"
             f"Required role competencies:\n{competency_text}\n\n"
             f"Relevant Additional Interview Guidance:\n"
             f"{document_text or 'No relevant guidance was retrieved.'}\n\n"
-            f"Candidate's previous answer:\n"
+            f"Interview history:\n{history_text}\n\n"
+            f"Latest answer evaluation:\n{evaluation_text}\n\n"
+            f"Candidate's latest answer:\n"
             f"{candidate_answer or 'No previous answer; this is the first question.'}\n\n"
-            "Generate the next technical interview question."
+            "Generate the next technical interview question. "
+            "Use the evaluation and remaining gaps to probe areas that "
+            "still need evidence. Do not repeat questions already covered."
         )
 
 

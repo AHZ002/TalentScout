@@ -116,6 +116,8 @@ class FakeLLM:
     def __init__(self) -> None:
         """Initialize the fake LLM and call tracking."""
         self.call_count = 0
+        self.system_prompts: list[str] = []
+        self.user_prompts: list[str] = []
 
     async def generate(
         self,
@@ -124,6 +126,9 @@ class FakeLLM:
     ) -> str:
         """Return a deterministic interview question."""
         self.call_count += 1
+        self.system_prompts.append(system_prompt)
+        self.user_prompts.append(user_prompt)
+                
         return "How would you design a FastAPI service for this role?"
 
 
@@ -223,6 +228,10 @@ async def test_interview_graph_handles_initial_and_follow_up_turns() -> None:
         "How would you design a FastAPI service for this role?"
     )
 
+    assert "No previous answer has been evaluated yet." in (
+        llm.user_prompts[0]
+    )
+
     follow_up_state: InterviewState = {
         **first_result,
         "candidate_answer": (
@@ -243,7 +252,19 @@ async def test_interview_graph_handles_initial_and_follow_up_turns() -> None:
 
     assert second_result["answer_evaluation"].correctness is (
         EvaluationLevel.STRONG
-    )    
+    )  
+
+    assert "Error handling was not discussed." in llm.user_prompts[1]
+    assert (
+        "Candidate described separating API and service layers."
+        in llm.user_prompts[1]
+    )
+
+    assert (
+        "I would use a layered architecture with separate API, "
+        "service, and repository layers."
+        in llm.user_prompts[1]
+    )          
 
     assert second_result["interview_history"] == [
         {
