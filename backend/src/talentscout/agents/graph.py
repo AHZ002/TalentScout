@@ -9,6 +9,10 @@ from talentscout.agents.answer_evaluation import (
     AnswerEvaluationAgent,
     AnswerEvaluationRequest,
 )
+from talentscout.agents.assessment_report import (
+    AssessmentReportAgent,
+    AssessmentReportRequest,
+)
 from talentscout.agents.role_competency import (
     RoleCompetencyAgent,
     RoleCompetencyAnalysis,
@@ -40,7 +44,7 @@ async def evaluate_answer(
     state: InterviewState,
     answer_evaluation_agent: AnswerEvaluationAgent,
 ) -> InterviewState:
-    """Evaluate the candidate's latest answer before generating the next question."""
+    """Evaluate and record the candidate's latest completed interview turn."""
     evaluation = await answer_evaluation_agent.evaluate(
         AnswerEvaluationRequest(
             question=state["current_question"],
@@ -49,9 +53,20 @@ async def evaluate_answer(
         )
     )
 
+    # The answer is now a completed interview turn because it has been evaluated.
+    interview_history = list(state.get("interview_history", []))
+    interview_history.append(
+        {
+            "question": state["current_question"],
+            "candidate_answer": state["candidate_answer"],
+            "evaluation": evaluation,
+        }
+    )
+
     return {
         **state,
         "answer_evaluation": evaluation,
+        "interview_history": interview_history,
     }
 
 class InterviewerAgent:
@@ -132,23 +147,6 @@ class InterviewerAgent:
             user_prompt=prompt,
         )
 
-        # Preserve the previous question and answer as a completed interview turn.
-        interview_history = list(state.get("interview_history", []))
-        answer_evaluation = state.get("answer_evaluation")
-
-        if (
-            candidate_answer
-            and state.get("current_question")
-            and answer_evaluation is not None
-        ):
-            interview_history.append(
-                {
-                    "question": state["current_question"],
-                    "candidate_answer": candidate_answer,
-                    "evaluation": answer_evaluation,
-                }
-            )
-
         return {
             **state,
             "retrieved_context": retrieved_context,
@@ -217,6 +215,7 @@ def build_interview_graph(
     llm: LLMService,
     role_competency_agent: RoleCompetencyAgent | None = None,
     answer_evaluation_agent: AnswerEvaluationAgent | None = None,
+    assessment_report_agent: AssessmentReportAgent | None = None,
 ) -> Any:
     """Build the initial LangGraph interview workflow."""
     # Allow tests and future callers to inject a controlled Role Competency Agent.
@@ -231,6 +230,10 @@ def build_interview_graph(
     evaluation_agent = (
         answer_evaluation_agent or AnswerEvaluationAgent(llm=llm)
     )
+
+    report_agent = (
+        assessment_report_agent or AssessmentReportAgent(llm=llm)
+    )    
 
     graph = StateGraph(InterviewState)
 
@@ -271,6 +274,23 @@ def build_interview_graph(
             evaluation_agent,
         )
 
+    async def assessment_report_node(
+        state: InterviewState,
+    ) -> InterviewState:
+        """Generate the final report from the completed interview evidence."""
+        report = await report_agent.generate(
+            AssessmentReportRequest(
+                job_description=state["job_description"],
+                role_competency_analysis=state["role_competency_analysis"],
+                interview_history=state["interview_history"],
+            )
+        )
+
+        return {
+            **state,
+            "assessment_report": report,
+        }    
+
     graph.add_node(
         "role_competency",
         role_competency_node,
@@ -279,7 +299,12 @@ def build_interview_graph(
     graph.add_node(
         "answer_evaluation",
         answer_evaluation_node,
-    )    
+    )   
+
+    graph.add_node(
+        "assessment_report",
+        assessment_report_node,
+    )     
 
     # Generate the interview question using the role analysis and retrieved context.
     graph.add_node(
@@ -297,6 +322,13 @@ def build_interview_graph(
 
         return "resume"
 
+    def route_after_evaluation(state: InterviewState) -> str:
+        """Continue interviewing or generate the final report."""
+        if state.get("interview_complete", False):
+            return "report"
+
+        return "interviewer"        
+
     graph.add_conditional_edges(
         START,
         route_interview,
@@ -308,7 +340,17 @@ def build_interview_graph(
     )
 
     graph.add_edge("role_competency", "interviewer")
-    graph.add_edge("answer_evaluation", "interviewer")    
+
+    graph.add_conditional_edges(
+        "answer_evaluation",
+        route_after_evaluation,
+        {
+            "report": "assessment_report",
+            "interviewer": "interviewer",
+        },
+    )
+
     graph.add_edge("interviewer", END)
+    graph.add_edge("assessment_report", END)
 
     return graph.compile()

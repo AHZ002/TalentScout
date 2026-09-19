@@ -1,18 +1,15 @@
 """State shared between nodes in the TalentScout interview graph."""
 
+from __future__ import annotations
+
 from typing import TypedDict
 from uuid import UUID
 
 from talentscout.agents.answer_evaluation import AnswerEvaluation
+from talentscout.agents.assessment_report import AssessmentReport
+from talentscout.agents.interview_types import InterviewTurn
 from talentscout.agents.role_competency import RoleCompetencyAnalysis
 
-
-class InterviewTurn(TypedDict):
-    """Represent one completed question-and-answer exchange."""
-
-    question: str
-    candidate_answer: str
-    evaluation: AnswerEvaluation
 
 class InterviewState(TypedDict, total=False):
     """Data passed between interview workflow agents."""
@@ -27,7 +24,13 @@ class InterviewState(TypedDict, total=False):
     candidate_answer: str
 
     # Structured evaluation of the candidate's latest answer.
-    answer_evaluation: AnswerEvaluation    
+    answer_evaluation: AnswerEvaluation   
+
+    # Indicates that the caller has submitted the final interview answer.
+    interview_complete: bool
+
+    # Final assessment produced after the interview is completed.
+    assessment_report: AssessmentReport 
 
     # Document text retrieved using semantic search.
     retrieved_context: list[str]

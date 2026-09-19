@@ -9,6 +9,11 @@ from talentscout.agents.answer_evaluation import (
     AnswerEvaluationAgent,
     EvaluationLevel,
 )
+from talentscout.agents.assessment_report import (
+    AssessmentReport,
+    AssessmentReportAgent,
+    CompetencyAssessment,
+)
 from talentscout.agents.graph import build_interview_graph
 from talentscout.agents.role_competency import (
     AssessmentPriority,
@@ -109,7 +114,34 @@ class FakeAnswerEvaluationAgent(AnswerEvaluationAgent):
             evidence=["Candidate described separating API and service layers."],
             confidence=0.9,
         )
-    
+
+class FakeAssessmentReportAgent(AssessmentReportAgent):
+    """Return a deterministic final assessment without calling an LLM."""
+
+    def __init__(self) -> None:
+        """Initialize the fake report agent."""
+        self.call_count = 0
+
+    async def generate(self, request) -> AssessmentReport:
+        """Return a deterministic final report."""
+        self.call_count += 1
+
+        return AssessmentReport(
+            overall_summary="Candidate demonstrated strong backend fundamentals.",
+            competency_assessments=[
+                CompetencyAssessment(
+                    name="Python backend development",
+                    performance=EvaluationLevel.STRONG,
+                    evidence=["Candidate demonstrated layered backend design."],
+                    gaps=["Error handling needs more evidence."],
+                )
+            ],
+            strengths=["Clear architecture reasoning."],
+            gaps=["Error handling needs more evidence."],
+            follow_up_areas=["Exception handling."],
+            confidence=0.9,
+        )
+        
 class FakeLLM:
     """Return a deterministic interview question without calling an LLM provider."""
 
@@ -281,4 +313,56 @@ async def test_interview_graph_handles_initial_and_follow_up_turns() -> None:
 
     assert second_result["current_question"] == (
         "How would you design a FastAPI service for this role?"
+    )
+
+@pytest.mark.asyncio
+async def test_interview_graph_generates_report_when_interview_is_complete() -> None:
+    """Verify that the final answer routes to the assessment report."""
+    role_agent = FakeRoleCompetencyAgent()
+    evaluation_agent = FakeAnswerEvaluationAgent()
+    report_agent = FakeAssessmentReportAgent()
+    retriever = FakeRetriever()
+    llm = FakeLLM()
+
+    graph = build_interview_graph(
+        retriever=retriever,
+        llm=llm,
+        role_competency_agent=role_agent,
+        answer_evaluation_agent=evaluation_agent,
+        assessment_report_agent=report_agent,
+    )
+
+    job_id = uuid4()
+
+    initial_state: InterviewState = {
+        "job_id": job_id,
+        "job_description": (
+            "Build backend services using Python and FastAPI."
+        ),
+    }
+
+    first_result = await graph.ainvoke(initial_state)
+
+    final_state: InterviewState = {
+        **first_result,
+        "candidate_answer": (
+            "I would separate the API, service, and repository layers."
+        ),
+        "interview_complete": True,
+    }
+
+    result = await graph.ainvoke(final_state)
+
+    assert role_agent.call_count == 1
+    assert evaluation_agent.call_count == 1
+    assert report_agent.call_count == 1
+
+    # The final answer must be recorded before the report is generated.
+    assert len(result["interview_history"]) == 1
+    assert result["interview_history"][0]["candidate_answer"] == (
+        "I would separate the API, service, and repository layers."
+    )
+
+    assert result["assessment_report"].overall_summary == (
+        "Candidate demonstrated strong backend fundamentals."
     )
