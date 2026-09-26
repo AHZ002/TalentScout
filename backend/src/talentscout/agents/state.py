@@ -24,7 +24,13 @@ class InterviewState(TypedDict, total=False):
     candidate_answer: str
 
     # Structured evaluation of the candidate's latest answer.
-    answer_evaluation: AnswerEvaluation   
+    answer_evaluation: AnswerEvaluation
+
+    # Competencies addressed across completed interview turns.
+    assessed_competencies: list[str]
+
+    # Competencies that still need interview evidence.
+    remaining_competencies: list[str]    
 
     # Indicates that the caller has submitted the final interview answer.
     interview_complete: bool

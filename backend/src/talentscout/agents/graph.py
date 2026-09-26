@@ -8,6 +8,7 @@ from talentscout.agents.answer_evaluation import (
     AnswerEvaluation,
     AnswerEvaluationAgent,
     AnswerEvaluationRequest,
+    InterviewDecision,
 )
 from talentscout.agents.assessment_report import (
     AssessmentReportAgent,
@@ -22,6 +23,9 @@ from talentscout.agents.state import InterviewState
 from talentscout.documents.retriever import DocumentRetriever
 from talentscout.llm.service import LLMService
 
+# Maximum number of evaluated interview turns for the MVP.
+# This prevents an interview from continuing indefinitely.
+MAX_INTERVIEW_TURNS = 8
 
 async def analyze_role(
     state: InterviewState,
@@ -44,14 +48,82 @@ async def evaluate_answer(
     state: InterviewState,
     answer_evaluation_agent: AnswerEvaluationAgent,
 ) -> InterviewState:
-    """Evaluate and record the candidate's latest completed interview turn."""
+    """Evaluate the answer and update interview progress."""
+    interview_history = list(state.get("interview_history", []))
+    turn_number = len(interview_history) + 1
+
+    role_competencies = state["role_competency_analysis"].competencies
+    competency_names = [competency.name for competency in role_competencies]
+
+    # Collect competencies already addressed by previous completed answers.
+    previously_assessed = sorted(
+        {
+            competency
+            for turn in interview_history
+            for competency in turn["evaluation"].assessed_competencies
+        }
+    )
+
+    previously_assessed_set = set(previously_assessed)
+
+    # Calculate the competencies that still need evidence before evaluating
+    # the current answer.
+    remaining_before_evaluation = [
+        name
+        for name in competency_names
+        if name not in previously_assessed_set
+    ]
+
     evaluation = await answer_evaluation_agent.evaluate(
         AnswerEvaluationRequest(
             question=state["current_question"],
             candidate_answer=state["candidate_answer"],
             role_competency_analysis=state["role_competency_analysis"],
+            turn_number=turn_number,
+            previously_assessed_competencies=previously_assessed,
+            remaining_competencies=remaining_before_evaluation,
         )
     )
+
+    # The answer is now a completed interview turn because it has been evaluated.
+    interview_history.append(
+        {
+            "question": state["current_question"],
+            "candidate_answer": state["candidate_answer"],
+            "evaluation": evaluation,
+        }
+    )
+
+    # Include competencies addressed by the current answer.
+    assessed_after_evaluation = sorted(
+        previously_assessed_set
+        | set(evaluation.assessed_competencies)
+    )
+
+    assessed_after_set = set(assessed_after_evaluation)
+
+    remaining_after_evaluation = [
+        name
+        for name in competency_names
+        if name not in assessed_after_set
+    ]
+
+    # The interview finishes when the evaluation recommends completion,
+    # all competencies have been assessed, or the safety turn limit is hit.
+    interview_complete = (
+        evaluation.next_action is InterviewDecision.COMPLETE
+        or not remaining_after_evaluation
+        or turn_number >= MAX_INTERVIEW_TURNS
+    )
+
+    return {
+        **state,
+        "answer_evaluation": evaluation,
+        "interview_history": interview_history,
+        "assessed_competencies": assessed_after_evaluation,
+        "remaining_competencies": remaining_after_evaluation,
+        "interview_complete": interview_complete,
+    }
 
     # The answer is now a completed interview turn because it has been evaluated.
     interview_history = list(state.get("interview_history", []))
@@ -95,6 +167,8 @@ class InterviewerAgent:
         role_competency_analysis = state["role_competency_analysis"]
         interview_history = state.get("interview_history", [])
         answer_evaluation = state.get("answer_evaluation")
+        assessed_competencies = state.get("assessed_competencies", [])
+        remaining_competencies = state.get("remaining_competencies", [])        
 
         # For the first question, retrieve documents using the JD.
         # For later questions, use the JD together with the candidate's
@@ -127,6 +201,8 @@ class InterviewerAgent:
             candidate_answer=candidate_answer,
             interview_history=interview_history,
             answer_evaluation=answer_evaluation,
+            assessed_competencies=assessed_competencies,
+            remaining_competencies=remaining_competencies,
         )
 
         # Generate the question through the provider-independent LLM service.
@@ -162,6 +238,8 @@ class InterviewerAgent:
         candidate_answer: str,
         interview_history: list,
         answer_evaluation: AnswerEvaluation | None,
+        assessed_competencies: list[str],
+        remaining_competencies: list[str],
     ) -> str:
         """Build the interviewer prompt from the complete interview context."""
         # Combine retrieved guidance chunks into a single context section.
@@ -194,6 +272,14 @@ class InterviewerAgent:
             else "No previous answer has been evaluated yet."
         )
 
+        # Show explicit competency progress so the interviewer can focus on
+        # areas that still need evidence rather than repeatedly probing the
+        # same competency.
+        progress_text = (
+            f"Assessed competencies: {assessed_competencies}\n"
+            f"Remaining competencies: {remaining_competencies}"
+        )
+
         return (
             f"Job description:\n{job_description}\n\n"
             f"Required role competencies:\n{competency_text}\n\n"
@@ -201,11 +287,13 @@ class InterviewerAgent:
             f"{document_text or 'No relevant guidance was retrieved.'}\n\n"
             f"Interview history:\n{history_text}\n\n"
             f"Latest answer evaluation:\n{evaluation_text}\n\n"
+            f"Interview progress:\n{progress_text}\n\n"
             f"Candidate's latest answer:\n"
             f"{candidate_answer or 'No previous answer; this is the first question.'}\n\n"
             "Generate the next technical interview question. "
-            "Use the evaluation and remaining gaps to probe areas that "
-            "still need evidence. Do not repeat questions already covered."
+            "Prioritize remaining competencies and unresolved gaps. "
+            "Do not repeat questions or competencies that already have "
+            "sufficient evidence."
         )
 
 

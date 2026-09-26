@@ -5,6 +5,7 @@ import pytest
 from talentscout.agents.answer_evaluation import (
     AnswerEvaluation,
     EvaluationLevel,
+    InterviewDecision,
 )
 from talentscout.agents.assessment_report import (
     AssessmentReport,
@@ -94,6 +95,9 @@ async def test_assessment_report_agent_returns_structured_report() -> None:
         strengths=["Clear architecture reasoning."],
         gaps=["Error handling was not discussed."],
         evidence=["Candidate described layered API design."],
+        assessed_competencies=["Python backend development"],
+        next_action=InterviewDecision.CONTINUE,
+        decision_reason="Further evidence is useful.",        
         confidence=0.9,
     )
 

@@ -9,7 +9,6 @@ from pydantic import BaseModel, ValidationError
 from talentscout.config.settings import get_settings
 from talentscout.llm.service import LLMService, StructuredOutputT
 
-
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel)
 
 

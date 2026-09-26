@@ -8,6 +8,7 @@ from talentscout.agents.answer_evaluation import (
     AnswerEvaluation,
     AnswerEvaluationAgent,
     EvaluationLevel,
+    InterviewDecision,
 )
 from talentscout.agents.assessment_report import (
     AssessmentReport,
@@ -44,19 +45,19 @@ class FakeRoleCompetencyAgent(RoleCompetencyAgent):
             required_technologies=["Python", "FastAPI"],
             competencies=[
                 CompetencyRequirement(
-                    name="Python backend development",
-                    description="Ability to build backend services with Python.",
-                    priority=AssessmentPriority.HIGH,
+                    name="API resilience",
+                    description="Ability to build resilient backend APIs.",
+                    priority=AssessmentPriority.MEDIUM,
                     source=RequirementSource.JOB_DESCRIPTION,
-                    technologies=["Python"],
-                    assessment_focus=["API development"],
+                    technologies=["FastAPI"],
+                    assessment_focus=["Error handling"],
                     evidence=[
                         RequirementEvidence(
                             source=RequirementSource.JOB_DESCRIPTION,
-                            excerpt="Build backend services using Python.",
+                            excerpt="Build resilient backend APIs.",
                         )
                     ],
-                )
+                ),
             ],
             guidance_priorities=[],
             de_emphasized_areas=[],
@@ -96,9 +97,13 @@ class FakeRetriever:
 class FakeAnswerEvaluationAgent(AnswerEvaluationAgent):
     """Return deterministic answer evaluations without calling an LLM."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        next_action: InterviewDecision = InterviewDecision.CONTINUE,
+    ) -> None:
         """Initialize the fake evaluator and call tracking."""
         self.call_count = 0
+        self.next_action = next_action
 
     async def evaluate(self, request) -> AnswerEvaluation:
         """Return a deterministic answer evaluation."""
@@ -112,6 +117,9 @@ class FakeAnswerEvaluationAgent(AnswerEvaluationAgent):
             strengths=["Clear architecture reasoning."],
             gaps=["Error handling was not discussed."],
             evidence=["Candidate described separating API and service layers."],
+            assessed_competencies=["Python backend development"],
+            next_action=self.next_action,
+            decision_reason="Deterministic test routing decision.",            
             confidence=0.9,
         )
 
@@ -281,6 +289,13 @@ async def test_interview_graph_handles_initial_and_follow_up_turns() -> None:
     assert retriever.call_count == 2
     assert llm.call_count == 2
     assert evaluation_agent.call_count == 1
+    assert second_result["interview_complete"] is False
+    assert second_result["assessed_competencies"] == [
+        "Python backend development"
+    ]
+    assert second_result["remaining_competencies"] == [
+        "API resilience"
+    ]    
 
     assert second_result["answer_evaluation"].correctness is (
         EvaluationLevel.STRONG
@@ -319,7 +334,9 @@ async def test_interview_graph_handles_initial_and_follow_up_turns() -> None:
 async def test_interview_graph_generates_report_when_interview_is_complete() -> None:
     """Verify that the final answer routes to the assessment report."""
     role_agent = FakeRoleCompetencyAgent()
-    evaluation_agent = FakeAnswerEvaluationAgent()
+    evaluation_agent = FakeAnswerEvaluationAgent(
+        next_action=InterviewDecision.COMPLETE,
+    )
     report_agent = FakeAssessmentReportAgent()
     retriever = FakeRetriever()
     llm = FakeLLM()
@@ -348,11 +365,11 @@ async def test_interview_graph_generates_report_when_interview_is_complete() -> 
         "candidate_answer": (
             "I would separate the API, service, and repository layers."
         ),
-        "interview_complete": True,
     }
 
     result = await graph.ainvoke(final_state)
 
+    assert result["interview_complete"] is True
     assert role_agent.call_count == 1
     assert evaluation_agent.call_count == 1
     assert report_agent.call_count == 1

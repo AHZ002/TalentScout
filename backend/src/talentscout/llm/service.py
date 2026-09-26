@@ -5,7 +5,6 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
-
 StructuredOutputT = TypeVar("StructuredOutputT", bound=BaseModel)
 
 

@@ -53,6 +53,8 @@ def test_question_prompt_uses_job_guidance_and_role_competencies() -> None:
         candidate_answer="No previous answer yet.",
         interview_history=[],
         answer_evaluation=None,
+        assessed_competencies=[],
+        remaining_competencies=["Database scalability"],        
     )
 
     assert "Required role competencies" in prompt
@@ -63,3 +65,6 @@ def test_question_prompt_uses_job_guidance_and_role_competencies() -> None:
     assert "connection-pool sizing" in prompt
     assert "Company/project context" not in prompt
     assert "company context" not in prompt.lower()
+    assert "Assessed competencies" in prompt
+    assert "Remaining competencies" in prompt
+    assert "Database scalability" in prompt    

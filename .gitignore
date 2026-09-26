@@ -39,3 +39,6 @@ data/
 logs/
 
 storage/documents/
+
+# Pytest-generated files
+backend/.pytest-unit/

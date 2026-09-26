@@ -7,6 +7,7 @@ from talentscout.agents.answer_evaluation import (
     AnswerEvaluationAgent,
     AnswerEvaluationRequest,
     EvaluationLevel,
+    InterviewDecision,
 )
 from talentscout.agents.role_competency import (
     AssessmentPriority,
@@ -15,7 +16,13 @@ from talentscout.agents.role_competency import (
     RequirementSource,
     RoleCompetencyAnalysis,
 )
-
+from talentscout.agents.answer_evaluation import (
+    AnswerEvaluation,
+    AnswerEvaluationAgent,
+    AnswerEvaluationRequest,
+    EvaluationLevel,
+    InterviewDecision,
+)
 
 class FakeLLM:
     """Return deterministic structured evaluation output."""
@@ -45,6 +52,9 @@ class FakeLLM:
             evidence=[
                 "Candidate described separating API, service, and repository layers."
             ],
+            assessed_competencies=["Python backend development"],
+            next_action=InterviewDecision.CONTINUE,
+            decision_reason="Further evidence is needed on error handling.",            
             confidence=0.9,
         )
 
@@ -85,6 +95,9 @@ async def test_answer_evaluation_agent_returns_structured_evaluation() -> None:
                 "I would separate the API, service, and repository layers."
             ),
             role_competency_analysis=role_analysis,
+            turn_number=1,
+            previously_assessed_competencies=[],
+            remaining_competencies=["Python backend development"],
         )
     )
 
@@ -94,4 +107,8 @@ async def test_answer_evaluation_agent_returns_structured_evaluation() -> None:
     assert result.demonstrated_competencies == [
         "Python backend development"
     ]
+    assert result.assessed_competencies == [
+        "Python backend development"
+    ]
+    assert result.next_action is InterviewDecision.CONTINUE    
     assert result.confidence == 0.9
