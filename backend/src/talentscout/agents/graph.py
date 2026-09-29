@@ -108,11 +108,12 @@ async def evaluate_answer(
         if name not in assessed_after_set
     ]
 
-    # The interview finishes when the evaluation recommends completion,
-    # all competencies have been assessed, or the safety turn limit is hit.
+    # The evaluator decides whether enough evidence has been collected.
+    # Competency coverage alone must not end the interview because an
+    # already-assessed competency can still contain unresolved gaps.
+    # The turn limit remains a hard safety boundary.
     interview_complete = (
         evaluation.next_action is InterviewDecision.COMPLETE
-        or not remaining_after_evaluation
         or turn_number >= MAX_INTERVIEW_TURNS
     )
 
@@ -123,22 +124,6 @@ async def evaluate_answer(
         "assessed_competencies": assessed_after_evaluation,
         "remaining_competencies": remaining_after_evaluation,
         "interview_complete": interview_complete,
-    }
-
-    # The answer is now a completed interview turn because it has been evaluated.
-    interview_history = list(state.get("interview_history", []))
-    interview_history.append(
-        {
-            "question": state["current_question"],
-            "candidate_answer": state["candidate_answer"],
-            "evaluation": evaluation,
-        }
-    )
-
-    return {
-        **state,
-        "answer_evaluation": evaluation,
-        "interview_history": interview_history,
     }
 
 class InterviewerAgent:

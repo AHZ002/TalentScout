@@ -100,10 +100,14 @@ class FakeAnswerEvaluationAgent(AnswerEvaluationAgent):
     def __init__(
         self,
         next_action: InterviewDecision = InterviewDecision.CONTINUE,
+        assessed_competencies: list[str] | None = None,
     ) -> None:
         """Initialize the fake evaluator and call tracking."""
         self.call_count = 0
         self.next_action = next_action
+        self.assessed_competencies = assessed_competencies or [
+            "Python backend development"
+        ]
 
     async def evaluate(self, request) -> AnswerEvaluation:
         """Return a deterministic answer evaluation."""
@@ -117,7 +121,7 @@ class FakeAnswerEvaluationAgent(AnswerEvaluationAgent):
             strengths=["Clear architecture reasoning."],
             gaps=["Error handling was not discussed."],
             evidence=["Candidate described separating API and service layers."],
-            assessed_competencies=["Python backend development"],
+            assessed_competencies=self.assessed_competencies,
             next_action=self.next_action,
             decision_reason="Deterministic test routing decision.",            
             confidence=0.9,
@@ -383,3 +387,61 @@ async def test_interview_graph_generates_report_when_interview_is_complete() -> 
     assert result["assessment_report"].overall_summary == (
         "Candidate demonstrated strong backend fundamentals."
     )
+
+@pytest.mark.asyncio
+async def test_interview_graph_continues_when_all_competencies_are_assessed() -> None:
+    """Ensure CONTINUE is not overridden by full competency coverage."""
+    role_agent = FakeRoleCompetencyAgent()
+    evaluation_agent = FakeAnswerEvaluationAgent(
+        next_action=InterviewDecision.CONTINUE,
+        assessed_competencies=["API resilience"],
+    )
+    retriever = FakeRetriever()
+    llm = FakeLLM()
+    report_agent = FakeAssessmentReportAgent()
+
+    graph = build_interview_graph(
+        retriever=retriever,
+        llm=llm,
+        role_competency_agent=role_agent,
+        answer_evaluation_agent=evaluation_agent,
+        assessment_report_agent=report_agent,
+    )
+
+    job_id = uuid4()
+
+    initial_state: InterviewState = {
+        "job_id": job_id,
+        "job_description": (
+            "Build backend services using Python and FastAPI."
+        ),
+    }
+
+    # Generate the first question.
+    first_result = await graph.ainvoke(initial_state)
+
+    # Submit an answer to the generated question.
+    follow_up_state: InterviewState = {
+        **first_result,
+        "candidate_answer": (
+            "I would use structured exception handling and "
+            "centralized error responses."
+        ),
+    }
+
+    result = await graph.ainvoke(follow_up_state)
+
+    # The evaluator says CONTINUE, so the interview must remain active
+    # even though every role competency has now been assessed.
+    assert result["interview_complete"] is False
+    assert result["assessed_competencies"] == ["API resilience"]
+    assert result["remaining_competencies"] == []
+
+    # The interviewer must generate the next question.
+    assert llm.call_count == 2
+    assert result["current_question"] == (
+        "How would you design a FastAPI service for this role?"
+    )
+
+    # A final report must not be generated while the evaluator says CONTINUE.
+    assert report_agent.call_count == 0
