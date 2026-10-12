@@ -92,7 +92,7 @@ async def test_agent_requests_source_grounded_structured_analysis() -> None:
     assert "Do not invent role requirements" in llm.system_prompt
     assert llm.user_prompt is not None
     assert "<job_description>" in llm.user_prompt
-    assert "<additional_interview_guidance index=\"1\">" in llm.user_prompt
+    assert '<additional_interview_guidance index="1">' in llm.user_prompt
 
 
 def test_request_rejects_blank_guidance_chunks() -> None:

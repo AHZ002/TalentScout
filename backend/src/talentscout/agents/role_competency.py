@@ -125,7 +125,7 @@ class RoleCompetencyAgent:
         """Delimit company-provided text before passing it to the LLM."""
         guidance = "\n\n".join(
             (
-                f"<additional_interview_guidance index=\"{index}\">\n"
+                f'<additional_interview_guidance index="{index}">\n'
                 f"{chunk}\n"
                 "</additional_interview_guidance>"
             )

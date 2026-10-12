@@ -23,9 +23,7 @@ async def reembed_missing_chunks() -> None:
 
         embedding_service = JinaEmbeddingService()
 
-        embeddings = await embedding_service.embed_many(
-            [chunk.text for chunk in chunks]
-        )
+        embeddings = await embedding_service.embed_many([chunk.text for chunk in chunks])
 
         for chunk, embedding in zip(chunks, embeddings, strict=True):
             chunk.embedding = embedding

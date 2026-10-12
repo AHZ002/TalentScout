@@ -97,16 +97,14 @@ async def test_assessment_report_agent_returns_structured_report() -> None:
         evidence=["Candidate described layered API design."],
         assessed_competencies=["Python backend development"],
         next_action=InterviewDecision.CONTINUE,
-        decision_reason="Further evidence is useful.",        
+        decision_reason="Further evidence is useful.",
         confidence=0.9,
     )
 
     interview_history: list[InterviewTurn] = [
         {
             "question": "How would you design a FastAPI service?",
-            "candidate_answer": (
-                "I would separate the API, service, and repository layers."
-            ),
+            "candidate_answer": ("I would separate the API, service, and repository layers."),
             "evaluation": evaluation,
         }
     ]
@@ -122,6 +120,4 @@ async def test_assessment_report_agent_returns_structured_report() -> None:
     assert llm.call_count == 1
     assert llm.response_model is AssessmentReport
     assert result.overall_summary.startswith("The candidate demonstrated")
-    assert result.competency_assessments[0].name == (
-        "Python backend development"
-    )
+    assert result.competency_assessments[0].name == ("Python backend development")

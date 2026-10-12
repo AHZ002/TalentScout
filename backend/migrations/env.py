@@ -13,7 +13,12 @@ from talentscout.db.base import Base
 # Import models so they register their tables on Base.metadata before
 # Alembic autogenerate inspects it. Required as a side effect even though
 # `Job` is not referenced directly below.
-from talentscout.db.models import Job  # noqa: F401
+from talentscout.db.models import (  # noqa: F401
+    Document,
+    DocumentChunk,
+    InterviewSession,
+    Job,
+)
 
 config = context.config
 

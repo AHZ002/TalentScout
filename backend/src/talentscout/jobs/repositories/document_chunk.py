@@ -46,7 +46,7 @@ class DocumentChunkRepository:
 
         result = await self.session.execute(statement)
 
-        return result.scalar_one_or_none() is not None        
+        return result.scalar_one_or_none() is not None
 
     async def search(
         self,

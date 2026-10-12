@@ -72,9 +72,7 @@ class DocumentService:
             document = await self.repository.create(document)
 
             # Generate vectors for all chunks before marking processing as complete.
-            embeddings = await self.embedding_service.embed_many(
-                [chunk.text for chunk in chunks]
-            )
+            embeddings = await self.embedding_service.embed_many([chunk.text for chunk in chunks])
 
             # Store each chunk together with its semantic embedding.
             document_chunks = [
@@ -114,15 +112,13 @@ class DocumentService:
             return 0
 
         # Generate embeddings through the provider-independent abstraction.
-        embeddings = await self.embedding_service.embed_many(
-            [chunk.text for chunk in chunks]
-        )
+        embeddings = await self.embedding_service.embed_many([chunk.text for chunk in chunks])
 
         # Attach each generated vector to its existing chunk.
         for chunk, embedding in zip(chunks, embeddings, strict=True):
             chunk.embedding = embedding
 
-        return len(chunks)    
+        return len(chunks)
 
     async def get_guidance_document(self, document_id: UUID) -> Document | None:
         """Retrieve an Additional Interview Guidance document by ID."""

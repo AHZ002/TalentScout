@@ -35,7 +35,7 @@ class FakeChunkRepository:
     async def has_chunks_for_job(self, job_id: UUID) -> bool:
         """Report whether Additional Interview Guidance exists for the job."""
         return self.has_chunks
-    
+
     async def search(
         self,
         job_id: UUID,
@@ -71,6 +71,7 @@ async def test_retriever_embeds_query_and_searches_repository() -> None:
     assert repository.job_id == job_id
     assert repository.embedding == [1.0, 0.0, 0.0]
     assert repository.limit == 3
+
 
 @pytest.mark.asyncio
 async def test_retriever_skips_embedding_when_job_has_no_guidance() -> None:

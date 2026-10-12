@@ -38,9 +38,7 @@ async def get_test_job(session: AsyncSession) -> Job:
     if requested_job_id:
         job = await session.get(Job, UUID(requested_job_id))
         if job is None:
-            raise RuntimeError(
-                f"TALENTSCOUT_TEST_JOB_ID={requested_job_id} was not found."
-            )
+            raise RuntimeError(f"TALENTSCOUT_TEST_JOB_ID={requested_job_id} was not found.")
         return job
 
     # Prefer a real job that already has Additional Interview Guidance chunks,
@@ -52,7 +50,7 @@ async def get_test_job(session: AsyncSession) -> Job:
         .order_by(Job.created_at.desc())
         .limit(1)
     )
-    job = await session.scalar(statement)
+    job = cast(Job | None, await session.scalar(statement))
 
     if job is None:
         raise RuntimeError(

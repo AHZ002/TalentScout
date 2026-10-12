@@ -1,0 +1,276 @@
+﻿
+========== backend/src/talentscout/jobs/services/interview_session.py ==========
+
+"""Manage interview-session lifecycle and validated durable InterviewState persistence."""
+
+from uuid import UUID
+
+from talentscout.agents.state import InterviewState
+from talentscout.agents.state_serializer import (
+    deserialize_interview_state,
+    serialize_interview_state,
+)
+from talentscout.db.models.interview_session import (
+    InterviewSession,
+    InterviewSessionStatus,
+)
+from talentscout.jobs.repositories.interview_session import InterviewSessionRepository
+from talentscout.jobs.repositories.job import JobRepository
+
+
+class JobNotFoundError(LookupError):
+    """Raised when an interview is requested for a nonexistent job."""
+
+
+class InterviewSessionNotFoundError(LookupError):
+    """Raised when an interview session does not exist."""
+
+
+class InterviewSessionAlreadyCompletedError(ValueError):
+    """Raised when a caller attempts to resume or modify a completed interview."""
+
+
+class InvalidInterviewStateError(ValueError):
+    """Raised when interview state conflicts with its session or lifecycle."""
+
+
+class InterviewSessionService:
+    """Coordinate job validation, state validation, and session persistence."""
+
+    def __init__(
+        self,
+        session_repository: InterviewSessionRepository,
+        job_repository: JobRepository,
+    ) -> None:
+        """Initialize the service with repositories sharing the request session."""
+        self.session_repository = session_repository
+        self.job_repository = job_repository
+
+    async def create_session(self, job_id: UUID) -> InterviewSession:
+        """Create an in-progress interview initialized from the selected job."""
+        job = await self.job_repository.get_by_id(job_id)
+        if job is None:
+            raise JobNotFoundError(f"Job '{job_id}' was not found.")
+
+        initial_state: InterviewState = {
+            "job_id": job.id,
+            "job_description": job.description,
+            "interview_history": [],
+            "retrieved_context": [],
+        }
+        validated_state = self._validate_state(
+            initial_state,
+            expected_job_id=job.id,
+        )
+
+        interview_session = InterviewSession(
+            job_id=job.id,
+            status=InterviewSessionStatus.IN_PROGRESS,
+            state=serialize_interview_state(validated_state),
+        )
+        return await self.session_repository.create(interview_session)
+
+    async def get_session(self, session_id: UUID) -> InterviewSession | None:
+        """Return a session after validating its persisted state and lifecycle."""
+        interview_session = await self.session_repository.get_by_id(session_id)
+        if interview_session is None:
+            return None
+
+        state = self._read_session_state(interview_session)
+        self._validate_lifecycle(interview_session.status, state)
+        return interview_session
+
+    async def resume_session(
+        self,
+        session_id: UUID,
+    ) -> tuple[InterviewSession, InterviewState]:
+        """Load validated state for an in-progress interview graph invocation."""
+        interview_session = await self.get_session(session_id)
+        if interview_session is None:
+            raise InterviewSessionNotFoundError(
+                f"Interview session '{session_id}' was not found."
+            )
+
+        if interview_session.status == InterviewSessionStatus.COMPLETED:
+            raise InterviewSessionAlreadyCompletedError(
+                f"Interview session '{session_id}' is already completed."
+            )
+
+        return interview_session, self._read_session_state(interview_session)
+
+    async def save_state(
+        self,
+        session_id: UUID,
+        state: InterviewState,
+    ) -> InterviewSession:
+        """Validate and persist graph state, updating status when a report exists."""
+        interview_session = await self.get_session(session_id)
+        if interview_session is None:
+            raise InterviewSessionNotFoundError(
+                f"Interview session '{session_id}' was not found."
+            )
+
+        if interview_session.status == InterviewSessionStatus.COMPLETED:
+            raise InterviewSessionAlreadyCompletedError(
+                f"Interview session '{session_id}' is already completed."
+            )
+
+        previous_state = self._read_session_state(interview_session)
+        validated_state = self._validate_state(
+            state,
+            expected_job_id=interview_session.job_id,
+        )
+
+        # The job description is the source-of-truth snapshot captured at session creation.
+        if validated_state["job_description"] != previous_state["job_description"]:
+            raise InvalidInterviewStateError(
+                "The job description cannot change during an interview session."
+            )
+
+        self._validate_lifecycle(
+            InterviewSessionStatus.COMPLETED
+            if validated_state.get("interview_complete", False)
+            else InterviewSessionStatus.IN_PROGRESS,
+            validated_state,
+        )
+
+        interview_session.state = serialize_interview_state(validated_state)
+        interview_session.status = (
+            InterviewSessionStatus.COMPLETED
+            if validated_state.get("interview_complete", False)
+            else InterviewSessionStatus.IN_PROGRESS
+        )
+        return await self.session_repository.update(interview_session)
+
+    @staticmethod
+    def _validate_state(
+        state: InterviewState,
+        expected_job_id: UUID,
+    ) -> InterviewState:
+        """Round-trip state through Pydantic and enforce required session identity."""
+        validated_state = deserialize_interview_state(
+            serialize_interview_state(state)
+        )
+        state_job_id = validated_state.get("job_id")
+        job_description = validated_state.get("job_description")
+
+        if state_job_id is None or job_description is None or not job_description.strip():
+            raise InvalidInterviewStateError(
+                "Interview state must include a job ID and a non-empty job description."
+            )
+        if state_job_id != expected_job_id:
+            raise InvalidInterviewStateError(
+                "Interview state job ID does not match the session's job ID."
+            )
+
+        return validated_state
+
+    @classmethod
+    def _read_session_state(
+        cls,
+        interview_session: InterviewSession,
+    ) -> InterviewState:
+        """Deserialize stored JSON and verify it belongs to this database session."""
+        try:
+            state = deserialize_interview_state(interview_session.state)
+        except (TypeError, ValueError) as exc:
+            raise InvalidInterviewStateError(
+                "Persisted interview state is invalid."
+            ) from exc
+
+        return cls._validate_state(state, expected_job_id=interview_session.job_id)
+
+    @staticmethod
+    def _validate_lifecycle(
+        status_value: InterviewSessionStatus | str,
+        state: InterviewState,
+    ) -> None:
+        """Ensure completion status agrees with the final state and report."""
+        interview_complete = state.get("interview_complete", False)
+        has_report = "assessment_report" in state
+
+        if interview_complete != has_report:
+            raise InvalidInterviewStateError(
+                "Interview completion and assessment-report state are inconsistent."
+            )
+
+        state_is_completed = interview_complete and has_report
+        session_is_completed = status_value == InterviewSessionStatus.COMPLETED
+        if state_is_completed != session_is_completed:
+            raise InvalidInterviewStateError(
+                "Interview session status does not match its persisted state."
+            )
+
+========== backend/src/talentscout/jobs/repositories/interview_session.py ==========
+
+"""Repository for durable candidate interview sessions."""
+
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from talentscout.db.models.interview_session import InterviewSession
+
+
+class InterviewSessionRepository:
+    """Handle database persistence for interview sessions."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(
+        self,
+        interview_session: InterviewSession,
+    ) -> InterviewSession:
+        """Persist a new interview session."""
+        self.session.add(interview_session)
+        await self.session.flush()
+        await self.session.refresh(interview_session)
+        return interview_session
+
+    async def get_by_id(
+        self,
+        session_id: UUID,
+    ) -> InterviewSession | None:
+        """Find an interview session by its identifier."""
+        result = await self.session.execute(
+            select(InterviewSession).where(
+                InterviewSession.id == session_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def update(
+        self,
+        interview_session: InterviewSession,
+    ) -> InterviewSession:
+        """Persist changes to an existing interview session."""
+        await self.session.flush()
+        await self.session.refresh(interview_session)
+        return interview_session
+
+========== backend/src/talentscout/jobs/schemas/interview_session.py ==========
+
+"""Pydantic request and response schemas for interview sessions."""
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class InterviewAnswerSubmit(BaseModel):
+    """Validate a candidate's answer submitted to an interview session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_answer: str = Field(min_length=1)
+
+    @field_validator("candidate_answer")
+    @classmethod
+    def normalize_candidate_answer(cls, value: str) -> str:
+        """Trim surrounding whitespace and reject blank answers."""
+        normalized = value.strip()
+
+        if not normalized:
+            raise ValueError("Candidate answer must not be blank.")
+
+        return normalized

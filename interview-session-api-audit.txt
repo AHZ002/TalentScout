@@ -1,0 +1,1291 @@
+﻿
+========== backend/src/talentscout/jobs/services/interview_session.py ==========
+
+"""Manage interview-session lifecycle and validated durable InterviewState persistence."""
+
+from uuid import UUID
+
+from talentscout.agents.state import InterviewState
+from talentscout.agents.state_serializer import (
+    deserialize_interview_state,
+    serialize_interview_state,
+)
+from talentscout.db.models.interview_session import (
+    InterviewSession,
+    InterviewSessionStatus,
+)
+from talentscout.jobs.repositories.interview_session import InterviewSessionRepository
+from talentscout.jobs.repositories.job import JobRepository
+
+
+class JobNotFoundError(LookupError):
+    """Raised when an interview is requested for a nonexistent job."""
+
+
+class InterviewSessionNotFoundError(LookupError):
+    """Raised when an interview session does not exist."""
+
+
+class InterviewSessionAlreadyCompletedError(ValueError):
+    """Raised when a caller attempts to resume or modify a completed interview."""
+
+
+class InvalidInterviewStateError(ValueError):
+    """Raised when interview state conflicts with its session or lifecycle."""
+
+
+class InterviewSessionService:
+    """Coordinate job validation, state validation, and session persistence."""
+
+    def __init__(
+        self,
+        session_repository: InterviewSessionRepository,
+        job_repository: JobRepository,
+    ) -> None:
+        """Initialize the service with repositories sharing the request session."""
+        self.session_repository = session_repository
+        self.job_repository = job_repository
+
+    async def create_session(self, job_id: UUID) -> InterviewSession:
+        """Create an in-progress interview initialized from the selected job."""
+        job = await self.job_repository.get_by_id(job_id)
+        if job is None:
+            raise JobNotFoundError(f"Job '{job_id}' was not found.")
+
+        initial_state: InterviewState = {
+            "job_id": job.id,
+            "job_description": job.description,
+            "interview_history": [],
+            "retrieved_context": [],
+        }
+        validated_state = self._validate_state(
+            initial_state,
+            expected_job_id=job.id,
+        )
+
+        interview_session = InterviewSession(
+            job_id=job.id,
+            status=InterviewSessionStatus.IN_PROGRESS,
+            state=serialize_interview_state(validated_state),
+        )
+        return await self.session_repository.create(interview_session)
+
+    async def get_session(self, session_id: UUID) -> InterviewSession | None:
+        """Return a session after validating its persisted state and lifecycle."""
+        interview_session = await self.session_repository.get_by_id(session_id)
+        if interview_session is None:
+            return None
+
+        state = self._read_session_state(interview_session)
+        self._validate_lifecycle(interview_session.status, state)
+        return interview_session
+
+    async def resume_session(
+        self,
+        session_id: UUID,
+    ) -> tuple[InterviewSession, InterviewState]:
+        """Load validated state for an in-progress interview graph invocation."""
+        interview_session = await self.get_session(session_id)
+        if interview_session is None:
+            raise InterviewSessionNotFoundError(
+                f"Interview session '{session_id}' was not found."
+            )
+
+        if interview_session.status == InterviewSessionStatus.COMPLETED:
+            raise InterviewSessionAlreadyCompletedError(
+                f"Interview session '{session_id}' is already completed."
+            )
+
+        return interview_session, self._read_session_state(interview_session)
+
+    async def save_state(
+        self,
+        session_id: UUID,
+        state: InterviewState,
+    ) -> InterviewSession:
+        """Validate and persist graph state, updating status when a report exists."""
+        interview_session = await self.get_session(session_id)
+        if interview_session is None:
+            raise InterviewSessionNotFoundError(
+                f"Interview session '{session_id}' was not found."
+            )
+
+        if interview_session.status == InterviewSessionStatus.COMPLETED:
+            raise InterviewSessionAlreadyCompletedError(
+                f"Interview session '{session_id}' is already completed."
+            )
+
+        previous_state = self._read_session_state(interview_session)
+        validated_state = self._validate_state(
+            state,
+            expected_job_id=interview_session.job_id,
+        )
+
+        # The job description is the source-of-truth snapshot captured at session creation.
+        if validated_state["job_description"] != previous_state["job_description"]:
+            raise InvalidInterviewStateError(
+                "The job description cannot change during an interview session."
+            )
+
+        self._validate_lifecycle(
+            InterviewSessionStatus.COMPLETED
+            if validated_state.get("interview_complete", False)
+            else InterviewSessionStatus.IN_PROGRESS,
+            validated_state,
+        )
+
+        interview_session.state = serialize_interview_state(validated_state)
+        interview_session.status = (
+            InterviewSessionStatus.COMPLETED
+            if validated_state.get("interview_complete", False)
+            else InterviewSessionStatus.IN_PROGRESS
+        )
+        return await self.session_repository.update(interview_session)
+
+    @staticmethod
+    def _validate_state(
+        state: InterviewState,
+        expected_job_id: UUID,
+    ) -> InterviewState:
+        """Round-trip state through Pydantic and enforce required session identity."""
+        validated_state = deserialize_interview_state(
+            serialize_interview_state(state)
+        )
+        state_job_id = validated_state.get("job_id")
+        job_description = validated_state.get("job_description")
+
+        if state_job_id is None or job_description is None or not job_description.strip():
+            raise InvalidInterviewStateError(
+                "Interview state must include a job ID and a non-empty job description."
+            )
+        if state_job_id != expected_job_id:
+            raise InvalidInterviewStateError(
+                "Interview state job ID does not match the session's job ID."
+            )
+
+        return validated_state
+
+    @classmethod
+    def _read_session_state(
+        cls,
+        interview_session: InterviewSession,
+    ) -> InterviewState:
+        """Deserialize stored JSON and verify it belongs to this database session."""
+        try:
+            state = deserialize_interview_state(interview_session.state)
+        except (TypeError, ValueError) as exc:
+            raise InvalidInterviewStateError(
+                "Persisted interview state is invalid."
+            ) from exc
+
+        return cls._validate_state(state, expected_job_id=interview_session.job_id)
+
+    @staticmethod
+    def _validate_lifecycle(
+        status_value: InterviewSessionStatus | str,
+        state: InterviewState,
+    ) -> None:
+        """Ensure completion status agrees with the final state and report."""
+        interview_complete = state.get("interview_complete", False)
+        has_report = "assessment_report" in state
+
+        if interview_complete != has_report:
+            raise InvalidInterviewStateError(
+                "Interview completion and assessment-report state are inconsistent."
+            )
+
+        state_is_completed = interview_complete and has_report
+        session_is_completed = status_value == InterviewSessionStatus.COMPLETED
+        if state_is_completed != session_is_completed:
+            raise InvalidInterviewStateError(
+                "Interview session status does not match its persisted state."
+            )
+
+========== backend/src/talentscout/jobs/repositories/interview_session.py ==========
+
+"""Repository for durable candidate interview sessions."""
+
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from talentscout.db.models.interview_session import InterviewSession
+
+
+class InterviewSessionRepository:
+    """Handle database persistence for interview sessions."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(
+        self,
+        interview_session: InterviewSession,
+    ) -> InterviewSession:
+        """Persist a new interview session."""
+        self.session.add(interview_session)
+        await self.session.flush()
+        await self.session.refresh(interview_session)
+        return interview_session
+
+    async def get_by_id(
+        self,
+        session_id: UUID,
+    ) -> InterviewSession | None:
+        """Find an interview session by its identifier."""
+        result = await self.session.execute(
+            select(InterviewSession).where(
+                InterviewSession.id == session_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def update(
+        self,
+        interview_session: InterviewSession,
+    ) -> InterviewSession:
+        """Persist changes to an existing interview session."""
+        await self.session.flush()
+        await self.session.refresh(interview_session)
+        return interview_session
+
+========== backend/src/talentscout/jobs/schemas/interview_session.py ==========
+
+"""Pydantic request and response schemas for interview sessions."""
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class InterviewAnswerSubmit(BaseModel):
+    """Validate a candidate's answer submitted to an interview session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_answer: str = Field(min_length=1)
+
+    @field_validator("candidate_answer")
+    @classmethod
+    def normalize_candidate_answer(cls, value: str) -> str:
+        """Trim surrounding whitespace and reject blank answers."""
+        normalized = value.strip()
+
+        if not normalized:
+            raise ValueError("Candidate answer must not be blank.")
+
+        return normalized
+
+========== backend/src/talentscout/db/models/interview_session.py ==========
+
+"""SQLAlchemy model for a durable candidate interview session."""
+
+from datetime import UTC, datetime
+from enum import StrEnum
+from uuid import UUID, uuid4
+
+from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
+from talentscout.db.base import Base
+
+
+class InterviewSessionStatus(StrEnum):
+    """Lifecycle states for a candidate interview session."""
+
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+
+
+class InterviewSession(Base):
+    """Persist the complete LangGraph state for one candidate interview."""
+
+    __tablename__ = "interview_sessions"
+
+    id: Mapped[UUID] = mapped_column(
+        primary_key=True,
+        default=uuid4,
+    )
+    job_id: Mapped[UUID] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[InterviewSessionStatus] = mapped_column(
+        String(20),
+        default=InterviewSessionStatus.IN_PROGRESS,
+        nullable=False,
+    )
+    state: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+========== backend/src/talentscout/agents/state.py ==========
+
+"""State shared between nodes in the TalentScout interview graph."""
+
+from __future__ import annotations
+
+from typing import TypedDict
+from uuid import UUID
+
+from talentscout.agents.answer_evaluation import AnswerEvaluation
+from talentscout.agents.assessment_report import AssessmentReport
+from talentscout.agents.interview_types import InterviewTurn
+from talentscout.agents.role_competency import RoleCompetencyAnalysis
+
+
+class InterviewState(TypedDict, total=False):
+    """Data passed between interview workflow agents."""
+
+    # Identifies the hiring job whose context is being used.
+    job_id: UUID
+
+    # The job description defines the skills and requirements being assessed.
+    job_description: str
+
+    # Candidate's latest answer, when available.
+    candidate_answer: str
+
+    # Structured evaluation of the candidate's latest answer.
+    answer_evaluation: AnswerEvaluation
+
+    # Competencies addressed across completed interview turns.
+    assessed_competencies: list[str]
+
+    # Competencies that still need interview evidence.
+    remaining_competencies: list[str]    
+
+    # Indicates that the caller has submitted the final interview answer.
+    interview_complete: bool
+
+    # Final assessment produced after the interview is completed.
+    assessment_report: AssessmentReport 
+
+    # Document text retrieved using semantic search.
+    retrieved_context: list[str]
+
+    # Question generated by the interviewer agent.
+    current_question: str
+
+    # Completed question-and-answer exchanges from the interview.
+    interview_history: list[InterviewTurn]    
+
+    # Optional Additional Interview Guidance supplied to role analysis.
+    additional_guidance: list[str]
+
+    # Structured competencies extracted from the JD and optional guidance.
+    role_competency_analysis: RoleCompetencyAnalysis
+
+========== backend/src/talentscout/agents/state_serializer.py ==========
+
+"""Serialize and validate InterviewState for durable persistence."""
+
+from typing import cast
+
+from pydantic import TypeAdapter
+
+from talentscout.agents.state import InterviewState
+
+_INTERVIEW_STATE_ADAPTER = TypeAdapter(InterviewState)
+
+
+def serialize_interview_state(state: InterviewState) -> dict[str, object]:
+    """Convert an InterviewState into JSON-compatible data."""
+    serialized = _INTERVIEW_STATE_ADAPTER.dump_python(
+        state,
+        mode="json",
+    )
+    return cast(dict[str, object], serialized)
+
+
+def deserialize_interview_state(payload: object) -> InterviewState:
+    """Validate and reconstruct InterviewState from persisted data."""
+    return _INTERVIEW_STATE_ADAPTER.validate_python(payload)
+
+========== backend/src/talentscout/agents/interview_types.py ==========
+
+"""Shared types used across the interview workflow."""
+
+from typing import TypedDict
+
+from talentscout.agents.answer_evaluation import AnswerEvaluation
+
+
+class InterviewTurn(TypedDict):
+    """Represent one completed question-and-answer exchange."""
+
+    question: str
+    candidate_answer: str
+    evaluation: AnswerEvaluation
+
+========== backend/src/talentscout/jobs/services/job.py ==========
+
+from uuid import UUID
+
+from talentscout.db.models.job import Job
+from talentscout.jobs.repositories.job import JobRepository
+from talentscout.jobs.schemas.job import JobCreate
+
+
+class JobService:
+    """Contains business logic for hiring jobs."""
+
+    def __init__(self, repository: JobRepository) -> None:
+        self.repository = repository
+
+    async def create_job(self, data: JobCreate) -> Job:
+        """Create and persist a new hiring job."""
+        job = Job(
+            title=data.title,
+            description=data.description,
+        )
+
+        return await self.repository.create(job)
+
+    async def get_job(self, job_id: UUID) -> Job | None:
+        """Retrieve a hiring job by ID."""
+        return await self.repository.get_by_id(job_id)
+
+========== C:\Users\ABDUL_HADI\Desktop\TalentScout\backend\tests\unit\test_interviewer_prompt.py ==========
+
+"""Tests for the interview question prompt."""
+
+from talentscout.agents.graph import InterviewerAgent
+from talentscout.agents.role_competency import (
+    AssessmentPriority,
+    CompetencyRequirement,
+    RequirementEvidence,
+    RequirementSource,
+    RoleCompetencyAnalysis,
+)
+
+
+def test_question_prompt_uses_job_guidance_and_role_competencies() -> None:
+    """Ensure the interviewer prompt contains all relevant interview context."""
+    role_competency_analysis = RoleCompetencyAnalysis(
+        role_summary="Build reliable PostgreSQL-backed services.",
+        required_technologies=["PostgreSQL"],
+        competencies=[
+            CompetencyRequirement(
+                name="Database scalability",
+                description="Design and operate scalable PostgreSQL data access.",
+                priority=AssessmentPriority.HIGH,
+                source=RequirementSource.BOTH,
+                technologies=["PostgreSQL"],
+                assessment_focus=[
+                    "Connection pooling",
+                    "Failure handling",
+                ],
+                evidence=[
+                    RequirementEvidence(
+                        source=RequirementSource.JOB_DESCRIPTION,
+                        excerpt="Build reliable PostgreSQL-backed services.",
+                    ),
+                    RequirementEvidence(
+                        source=RequirementSource.ADDITIONAL_INTERVIEW_GUIDANCE,
+                        excerpt="Assess connection-pool sizing and failure handling.",
+                    ),
+                ],
+            )
+        ],
+        guidance_priorities=["PostgreSQL connection pooling and failure handling"],
+        de_emphasized_areas=[],
+    )
+
+    prompt = InterviewerAgent._build_prompt(
+        job_description=(
+            "Build reliable PostgreSQL-backed services."
+        ),
+        role_competency_analysis=role_competency_analysis,
+        retrieved_context=[
+            "Assess connection-pool sizing and failure handling.",
+        ],
+        candidate_answer="No previous answer yet.",
+        interview_history=[],
+        answer_evaluation=None,
+        assessed_competencies=[],
+        remaining_competencies=["Database scalability"],        
+    )
+
+    assert "Required role competencies" in prompt
+    assert "Database scalability" in prompt
+    assert "PostgreSQL" in prompt
+    assert "Connection pooling" in prompt
+    assert "Relevant Additional Interview Guidance" in prompt
+    assert "connection-pool sizing" in prompt
+    assert "Company/project context" not in prompt
+    assert "company context" not in prompt.lower()
+    assert "Assessed competencies" in prompt
+    assert "Remaining competencies" in prompt
+    assert "Database scalability" in prompt    
+
+========== C:\Users\ABDUL_HADI\Desktop\TalentScout\backend\tests\unit\test_interview_graph.py ==========
+
+"""Unit tests for the LangGraph interview workflow."""
+
+from uuid import uuid4
+
+import pytest
+
+from talentscout.agents.answer_evaluation import (
+    AnswerEvaluation,
+    AnswerEvaluationAgent,
+    EvaluationLevel,
+    InterviewDecision,
+)
+from talentscout.agents.assessment_report import (
+    AssessmentReport,
+    AssessmentReportAgent,
+    CompetencyAssessment,
+)
+from talentscout.agents.graph import build_interview_graph
+from talentscout.agents.role_competency import (
+    AssessmentPriority,
+    CompetencyRequirement,
+    RequirementEvidence,
+    RequirementSource,
+    RoleCompetencyAgent,
+    RoleCompetencyAnalysis,
+)
+from talentscout.agents.state import InterviewState
+
+
+class FakeRoleCompetencyAgent(RoleCompetencyAgent):
+    """Return a deterministic role analysis without calling a real LLM."""
+
+    def __init__(self) -> None:
+        """Initialize the fake agent and its call tracking."""
+        self.call_count = 0
+        self.last_request = None
+
+    async def analyze(self, request) -> RoleCompetencyAnalysis:
+        """Return a deterministic competency analysis."""
+        self.call_count += 1
+        self.last_request = request
+
+        return RoleCompetencyAnalysis(
+            role_summary="Python backend engineer",
+            required_technologies=["Python", "FastAPI"],
+            competencies=[
+                CompetencyRequirement(
+                    name="API resilience",
+                    description="Ability to build resilient backend APIs.",
+                    priority=AssessmentPriority.MEDIUM,
+                    source=RequirementSource.JOB_DESCRIPTION,
+                    technologies=["FastAPI"],
+                    assessment_focus=["Error handling"],
+                    evidence=[
+                        RequirementEvidence(
+                            source=RequirementSource.JOB_DESCRIPTION,
+                            excerpt="Build resilient backend APIs.",
+                        )
+                    ],
+                ),
+            ],
+            guidance_priorities=[],
+            de_emphasized_areas=[],
+        )
+
+
+class FakeDocumentChunk:
+    """Represent the document-chunk fields needed by the graph test."""
+
+    def __init__(self, text: str) -> None:
+        """Initialize a fake retrieved document chunk."""
+        self.text = text
+        
+class FakeRetriever:
+    """Return deterministic retrieval results without accessing the database."""
+
+    def __init__(self) -> None:
+        """Initialize the fake retriever and call tracking."""
+        self.call_count = 0
+        self.queries: list[str] = []
+
+    async def retrieve(
+        self,
+        job_id,
+        query: str,
+        limit: int = 5,
+    ) -> list:
+        """Return no guidance while recording the retrieval request."""
+        self.call_count += 1
+        self.queries.append(query)
+        return [
+            FakeDocumentChunk(
+                text="Focus on designing resilient FastAPI APIs.",
+            )
+        ]        
+
+class FakeAnswerEvaluationAgent(AnswerEvaluationAgent):
+    """Return deterministic answer evaluations without calling an LLM."""
+
+    def __init__(
+        self,
+        next_action: InterviewDecision = InterviewDecision.CONTINUE,
+        assessed_competencies: list[str] | None = None,
+    ) -> None:
+        """Initialize the fake evaluator and call tracking."""
+        self.call_count = 0
+        self.next_action = next_action
+        self.assessed_competencies = assessed_competencies or [
+            "Python backend development"
+        ]
+
+    async def evaluate(self, request) -> AnswerEvaluation:
+        """Return a deterministic answer evaluation."""
+        self.call_count += 1
+
+        return AnswerEvaluation(
+            correctness=EvaluationLevel.STRONG,
+            depth=EvaluationLevel.ADEQUATE,
+            reasoning=EvaluationLevel.STRONG,
+            demonstrated_competencies=["Python backend development"],
+            strengths=["Clear architecture reasoning."],
+            gaps=["Error handling was not discussed."],
+            evidence=["Candidate described separating API and service layers."],
+            assessed_competencies=self.assessed_competencies,
+            next_action=self.next_action,
+            decision_reason="Deterministic test routing decision.",            
+            confidence=0.9,
+        )
+
+class FakeAssessmentReportAgent(AssessmentReportAgent):
+    """Return a deterministic final assessment without calling an LLM."""
+
+    def __init__(self) -> None:
+        """Initialize the fake report agent."""
+        self.call_count = 0
+
+    async def generate(self, request) -> AssessmentReport:
+        """Return a deterministic final report."""
+        self.call_count += 1
+
+        return AssessmentReport(
+            overall_summary="Candidate demonstrated strong backend fundamentals.",
+            competency_assessments=[
+                CompetencyAssessment(
+                    name="Python backend development",
+                    performance=EvaluationLevel.STRONG,
+                    evidence=["Candidate demonstrated layered backend design."],
+                    gaps=["Error handling needs more evidence."],
+                )
+            ],
+            strengths=["Clear architecture reasoning."],
+            gaps=["Error handling needs more evidence."],
+            follow_up_areas=["Exception handling."],
+            confidence=0.9,
+        )
+        
+class FakeLLM:
+    """Return a deterministic interview question without calling an LLM provider."""
+
+    def __init__(self) -> None:
+        """Initialize the fake LLM and call tracking."""
+        self.call_count = 0
+        self.system_prompts: list[str] = []
+        self.user_prompts: list[str] = []
+
+    async def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        """Return a deterministic interview question."""
+        self.call_count += 1
+        self.system_prompts.append(system_prompt)
+        self.user_prompts.append(user_prompt)
+                
+        return "How would you design a FastAPI service for this role?"
+
+
+@pytest.mark.asyncio
+async def test_interview_graph_reuses_initial_retrieval() -> None:
+    """Verify that the first question reuses guidance retrieved during role analysis."""
+    role_agent = FakeRoleCompetencyAgent()
+    retriever = FakeRetriever()
+    llm = FakeLLM()
+
+    graph = build_interview_graph(
+        retriever=retriever,
+        llm=llm,
+        role_competency_agent=role_agent,
+    )
+
+    job_id = uuid4()
+
+    initial_state: InterviewState = {
+        "job_id": job_id,
+        "job_description": (
+            "Build backend services using Python and FastAPI."
+        ),
+    }
+
+    result = await graph.ainvoke(initial_state)
+
+    assert role_agent.call_count == 1
+    assert retriever.call_count == 1
+    assert llm.call_count == 1
+
+    assert role_agent.last_request is not None
+    assert role_agent.last_request.additional_guidance == [
+        "Focus on designing resilient FastAPI APIs."
+    ]
+
+    assert result["retrieved_context"] == [
+        "Focus on designing resilient FastAPI APIs."
+    ]
+
+    assert result["role_competency_analysis"].role_summary == (
+        "Python backend engineer"
+    )
+
+    assert result["current_question"] == (
+        "How would you design a FastAPI service for this role?"
+    )
+
+    assert result["current_question"] == (
+        "How would you design a FastAPI service for this role?"
+    )
+
+@pytest.mark.asyncio
+async def test_interview_graph_handles_initial_and_follow_up_turns() -> None:
+    """Verify role analysis runs once and follow-up turns reuse the analysis."""
+    role_agent = FakeRoleCompetencyAgent()
+    evaluation_agent = FakeAnswerEvaluationAgent()
+    retriever = FakeRetriever()
+    llm = FakeLLM()
+
+    graph = build_interview_graph(
+        retriever=retriever,
+        llm=llm,
+        role_competency_agent=role_agent,
+        answer_evaluation_agent=evaluation_agent,
+    )
+
+    job_id = uuid4()
+
+    initial_state: InterviewState = {
+        "job_id": job_id,
+        "job_description": (
+            "Build backend services using Python and FastAPI."
+        ),
+    }
+
+    first_result = await graph.ainvoke(initial_state)
+
+    # Initial interview: role analysis and retrieval both happen.
+    assert role_agent.call_count == 1
+    assert retriever.call_count == 1
+    assert llm.call_count == 1
+    assert evaluation_agent.call_count == 0    
+
+    assert role_agent.last_request is not None
+    assert role_agent.last_request.additional_guidance == [
+        "Focus on designing resilient FastAPI APIs."
+    ]
+
+    assert first_result["retrieved_context"] == [
+        "Focus on designing resilient FastAPI APIs."
+    ]
+
+    assert first_result["interview_history"] == []
+
+    assert first_result["current_question"] == (
+        "How would you design a FastAPI service for this role?"
+    )
+
+    assert "No previous answer has been evaluated yet." in (
+        llm.user_prompts[0]
+    )
+
+    follow_up_state: InterviewState = {
+        **first_result,
+        "candidate_answer": (
+            "I would use a layered architecture with separate API, "
+            "service, and repository layers."
+        ),
+    }
+
+    second_result = await graph.ainvoke(follow_up_state)
+
+    # Follow-up: role analysis must NOT run again.
+    assert role_agent.call_count == 1
+
+    # Retrieval and question generation do happen again for adaptation.
+    assert retriever.call_count == 2
+    assert llm.call_count == 2
+    assert evaluation_agent.call_count == 1
+    assert second_result["interview_complete"] is False
+    assert second_result["assessed_competencies"] == [
+        "Python backend development"
+    ]
+    assert second_result["remaining_competencies"] == [
+        "API resilience"
+    ]    
+
+    assert second_result["answer_evaluation"].correctness is (
+        EvaluationLevel.STRONG
+    )  
+
+    assert "Error handling was not discussed." in llm.user_prompts[1]
+    assert (
+        "Candidate described separating API and service layers."
+        in llm.user_prompts[1]
+    )
+
+    assert (
+        "I would use a layered architecture with separate API, "
+        "service, and repository layers."
+        in llm.user_prompts[1]
+    )          
+
+    assert second_result["interview_history"] == [
+        {
+            "question": (
+                "How would you design a FastAPI service for this role?"
+            ),
+            "candidate_answer": (
+                "I would use a layered architecture with separate API, "
+                "service, and repository layers."
+            ),
+            "evaluation": second_result["answer_evaluation"],
+        }
+    ]
+
+    assert second_result["current_question"] == (
+        "How would you design a FastAPI service for this role?"
+    )
+
+@pytest.mark.asyncio
+async def test_interview_graph_generates_report_when_interview_is_complete() -> None:
+    """Verify that the final answer routes to the assessment report."""
+    role_agent = FakeRoleCompetencyAgent()
+    evaluation_agent = FakeAnswerEvaluationAgent(
+        next_action=InterviewDecision.COMPLETE,
+    )
+    report_agent = FakeAssessmentReportAgent()
+    retriever = FakeRetriever()
+    llm = FakeLLM()
+
+    graph = build_interview_graph(
+        retriever=retriever,
+        llm=llm,
+        role_competency_agent=role_agent,
+        answer_evaluation_agent=evaluation_agent,
+        assessment_report_agent=report_agent,
+    )
+
+    job_id = uuid4()
+
+    initial_state: InterviewState = {
+        "job_id": job_id,
+        "job_description": (
+            "Build backend services using Python and FastAPI."
+        ),
+    }
+
+    first_result = await graph.ainvoke(initial_state)
+
+    final_state: InterviewState = {
+        **first_result,
+        "candidate_answer": (
+            "I would separate the API, service, and repository layers."
+        ),
+    }
+
+    result = await graph.ainvoke(final_state)
+
+    assert result["interview_complete"] is True
+    assert role_agent.call_count == 1
+    assert evaluation_agent.call_count == 1
+    assert report_agent.call_count == 1
+
+    # The final answer must be recorded before the report is generated.
+    assert len(result["interview_history"]) == 1
+    assert result["interview_history"][0]["candidate_answer"] == (
+        "I would separate the API, service, and repository layers."
+    )
+
+    assert result["assessment_report"].overall_summary == (
+        "Candidate demonstrated strong backend fundamentals."
+    )
+
+@pytest.mark.asyncio
+async def test_interview_graph_continues_when_all_competencies_are_assessed() -> None:
+    """Ensure CONTINUE is not overridden by full competency coverage."""
+    role_agent = FakeRoleCompetencyAgent()
+    evaluation_agent = FakeAnswerEvaluationAgent(
+        next_action=InterviewDecision.CONTINUE,
+        assessed_competencies=["API resilience"],
+    )
+    retriever = FakeRetriever()
+    llm = FakeLLM()
+    report_agent = FakeAssessmentReportAgent()
+
+    graph = build_interview_graph(
+        retriever=retriever,
+        llm=llm,
+        role_competency_agent=role_agent,
+        answer_evaluation_agent=evaluation_agent,
+        assessment_report_agent=report_agent,
+    )
+
+    job_id = uuid4()
+
+    initial_state: InterviewState = {
+        "job_id": job_id,
+        "job_description": (
+            "Build backend services using Python and FastAPI."
+        ),
+    }
+
+    # Generate the first question.
+    first_result = await graph.ainvoke(initial_state)
+
+    # Submit an answer to the generated question.
+    follow_up_state: InterviewState = {
+        **first_result,
+        "candidate_answer": (
+            "I would use structured exception handling and "
+            "centralized error responses."
+        ),
+    }
+
+    result = await graph.ainvoke(follow_up_state)
+
+    # The evaluator says CONTINUE, so the interview must remain active
+    # even though every role competency has now been assessed.
+    assert result["interview_complete"] is False
+    assert result["assessed_competencies"] == ["API resilience"]
+    assert result["remaining_competencies"] == []
+
+    # The interviewer must generate the next question.
+    assert llm.call_count == 2
+    assert result["current_question"] == (
+        "How would you design a FastAPI service for this role?"
+    )
+
+    # A final report must not be generated while the evaluator says CONTINUE.
+    assert report_agent.call_count == 0
+
+========== C:\Users\ABDUL_HADI\Desktop\TalentScout\backend\tests\unit\test_interview_session_schemas.py ==========
+
+"""Unit tests for interview-session API request validation."""
+
+import pytest
+from pydantic import ValidationError
+
+from talentscout.jobs.schemas.interview_session import InterviewAnswerSubmit
+
+
+def test_candidate_answer_is_trimmed() -> None:
+    """Normalize surrounding whitespace before processing an answer."""
+    request = InterviewAnswerSubmit(
+        candidate_answer="  I would use FastAPI.  ",
+    )
+
+    assert request.candidate_answer == "I would use FastAPI."
+
+
+def test_whitespace_only_candidate_answer_is_rejected() -> None:
+    """Reject answers that contain no meaningful content."""
+    with pytest.raises(ValidationError):
+        InterviewAnswerSubmit(candidate_answer="   ")
+
+
+def test_empty_candidate_answer_is_rejected() -> None:
+    """Reject an empty answer."""
+    with pytest.raises(ValidationError):
+        InterviewAnswerSubmit(candidate_answer="")
+
+
+def test_unexpected_request_fields_are_rejected() -> None:
+    """Prevent undocumented fields from silently entering the API."""
+    with pytest.raises(ValidationError):
+        InterviewAnswerSubmit(
+            candidate_answer="I would use FastAPI.",
+            job_id="unexpected",
+        )
+
+========== C:\Users\ABDUL_HADI\Desktop\TalentScout\backend\tests\unit\test_interview_session_service.py ==========
+
+"""Unit tests for interview-session creation, resumption, and state persistence."""
+
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from uuid import UUID, uuid4
+
+import pytest
+
+from talentscout.agents.assessment_report import AssessmentReport
+from talentscout.agents.state import InterviewState
+from talentscout.db.models.interview_session import (
+    InterviewSession,
+    InterviewSessionStatus,
+)
+from talentscout.jobs.services.interview_session import (
+    InterviewSessionAlreadyCompletedError,
+    InterviewSessionNotFoundError,
+    InterviewSessionService,
+    InvalidInterviewStateError,
+    JobNotFoundError,
+)
+
+
+def _initial_state(job_id: UUID) -> InterviewState:
+    """Build a minimal valid graph state for service tests."""
+    return {
+        "job_id": job_id,
+        "job_description": "Build Python backend services.",
+        "interview_history": [],
+        "retrieved_context": [],
+    }
+
+
+def _assessment_report() -> AssessmentReport:
+    """Build a valid report without invoking an LLM provider."""
+    return AssessmentReport(
+        overall_summary="The candidate demonstrated strong Python fundamentals.",
+        competency_assessments=[
+            {
+                "name": "Python",
+                "performance": "strong",
+                "evidence": ["Explained Python data structures accurately."],
+                "gaps": [],
+            }
+        ],
+        strengths=["Clear technical reasoning"],
+        gaps=[],
+        follow_up_areas=[],
+        confidence=0.9,
+    )
+
+
+@pytest.fixture
+
+def service_dependencies() -> tuple[InterviewSessionService, AsyncMock, AsyncMock]:
+    """Provide mocked repositories so unit tests require no database."""
+    from talentscout.jobs.repositories.interview_session import InterviewSessionRepository
+    from talentscout.jobs.repositories.job import JobRepository
+
+    session_repository = AsyncMock(spec=InterviewSessionRepository)
+    job_repository = AsyncMock(spec=JobRepository)
+    session_repository.create.side_effect = lambda value: value
+    session_repository.update.side_effect = lambda value: value
+    service = InterviewSessionService(session_repository, job_repository)
+    return service, session_repository, job_repository
+
+
+@pytest.mark.asyncio
+async def test_create_session_initializes_state_from_job(
+    service_dependencies: tuple[InterviewSessionService, AsyncMock, AsyncMock],
+) -> None:
+    """A new session stores the selected job context and starts in progress."""
+    service, session_repository, job_repository = service_dependencies
+    job_id = uuid4()
+    job_repository.get_by_id.return_value = SimpleNamespace(
+        id=job_id,
+        description="Build Python backend services.",
+    )
+
+    session = await service.create_session(job_id)
+
+    assert session.job_id == job_id
+    assert session.status == InterviewSessionStatus.IN_PROGRESS
+    assert session.state["job_id"] == str(job_id)
+    assert session.state["job_description"] == "Build Python backend services."
+    assert session.state["interview_history"] == []
+    session_repository.create.assert_awaited_once_with(session)
+
+
+@pytest.mark.asyncio
+async def test_create_session_rejects_unknown_job(
+    service_dependencies: tuple[InterviewSessionService, AsyncMock, AsyncMock],
+) -> None:
+    """A session cannot be created without an existing job."""
+    service, session_repository, job_repository = service_dependencies
+    job_repository.get_by_id.return_value = None
+    job_id = uuid4()
+
+    with pytest.raises(JobNotFoundError):
+        await service.create_session(job_id)
+
+    session_repository.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resume_session_returns_validated_state(
+    service_dependencies: tuple[InterviewSessionService, AsyncMock, AsyncMock],
+) -> None:
+    """An active session returns state ready for graph resumption."""
+    service, session_repository, _ = service_dependencies
+    job_id = uuid4()
+    state = _initial_state(job_id)
+    session = InterviewSession(
+        job_id=job_id,
+        status=InterviewSessionStatus.IN_PROGRESS,
+        state={
+            "job_id": str(job_id),
+            "job_description": state["job_description"],
+            "interview_history": [],
+            "retrieved_context": [],
+        },
+    )
+    session_repository.get_by_id.return_value = session
+
+    loaded_session, restored_state = await service.resume_session(uuid4())
+
+    assert loaded_session is session
+    assert restored_state == state
+
+
+@pytest.mark.asyncio
+async def test_resume_session_rejects_completed_session(
+    service_dependencies: tuple[InterviewSessionService, AsyncMock, AsyncMock],
+) -> None:
+    """A completed interview cannot be resumed as an active interview."""
+    service, session_repository, _ = service_dependencies
+    job_id = uuid4()
+    state = _initial_state(job_id)
+    state["interview_complete"] = True
+    state["assessment_report"] = _assessment_report()
+    session_repository.get_by_id.return_value = InterviewSession(
+        job_id=job_id,
+        status=InterviewSessionStatus.COMPLETED,
+        state={
+            **state,
+            "job_id": str(job_id),
+            "assessment_report": state["assessment_report"].model_dump(mode="json"),
+        },
+    )
+
+    with pytest.raises(InterviewSessionAlreadyCompletedError):
+        await service.resume_session(uuid4())
+
+
+@pytest.mark.asyncio
+async def test_save_state_marks_session_completed_with_report(
+    service_dependencies: tuple[InterviewSessionService, AsyncMock, AsyncMock],
+) -> None:
+    """A final state is marked completed only when its report is present."""
+    service, session_repository, _ = service_dependencies
+    job_id = uuid4()
+    session_id = uuid4()
+    session = InterviewSession(
+        id=session_id,
+        job_id=job_id,
+        status=InterviewSessionStatus.IN_PROGRESS,
+        state={
+            "job_id": str(job_id),
+            "job_description": "Build Python backend services.",
+            "interview_history": [],
+            "retrieved_context": [],
+        },
+    )
+    session_repository.get_by_id.return_value = session
+    final_state = _initial_state(job_id)
+    final_state["interview_complete"] = True
+    final_state["assessment_report"] = _assessment_report()
+
+    saved_session = await service.save_state(session_id, final_state)
+
+    assert saved_session.status == InterviewSessionStatus.COMPLETED
+    assert saved_session.state["interview_complete"] is True
+    assert "assessment_report" in saved_session.state
+    session_repository.update.assert_awaited_once_with(session)
+
+
+@pytest.mark.asyncio
+async def test_save_state_rejects_state_for_another_job(
+    service_dependencies: tuple[InterviewSessionService, AsyncMock, AsyncMock],
+) -> None:
+    """State from another job cannot overwrite this session's state."""
+    service, session_repository, _ = service_dependencies
+    job_id = uuid4()
+    session_id = uuid4()
+    session_repository.get_by_id.return_value = InterviewSession(
+        id=session_id,
+        job_id=job_id,
+        status=InterviewSessionStatus.IN_PROGRESS,
+        state={
+            "job_id": str(job_id),
+            "job_description": "Build Python backend services.",
+            "interview_history": [],
+            "retrieved_context": [],
+        },
+    )
+
+    with pytest.raises(InvalidInterviewStateError, match="does not match"):
+        await service.save_state(session_id, _initial_state(uuid4()))
+
+    session_repository.update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resume_session_rejects_missing_session(
+    service_dependencies: tuple[InterviewSessionService, AsyncMock, AsyncMock],
+) -> None:
+    """A missing session produces a clear service-level error."""
+    service, session_repository, _ = service_dependencies
+    session_repository.get_by_id.return_value = None
+
+    with pytest.raises(InterviewSessionNotFoundError):
+        await service.resume_session(uuid4())
+
+========== C:\Users\ABDUL_HADI\Desktop\TalentScout\backend\tests\unit\test_interview_state_serialization.py ==========
+
+"""Unit tests for durable InterviewState serialization and validation."""
+
+from uuid import uuid4
+
+import pytest
+from pydantic import ValidationError
+
+from talentscout.agents.state import InterviewState
+from talentscout.agents.state_serializer import (
+    deserialize_interview_state,
+    serialize_interview_state,
+)
+
+
+def test_interview_state_round_trips_through_json_data() -> None:
+    """Verify UUIDs and state values survive persistence serialization."""
+    job_id = uuid4()
+
+    state: InterviewState = {
+        "job_id": job_id,
+        "job_description": "Build Python backend services.",
+        "interview_history": [],
+        "retrieved_context": [],
+    }
+
+    serialized = serialize_interview_state(state)
+    restored = deserialize_interview_state(serialized)
+
+    assert serialized["job_id"] == str(job_id)
+    assert restored == state
+
+
+def test_interview_state_deserialization_rejects_invalid_data() -> None:
+    """Verify corrupted persisted state fails validation."""
+    with pytest.raises(ValidationError):
+        deserialize_interview_state(
+            {
+                "job_id": "not-a-uuid",
+                "job_description": "Build Python backend services.",
+            }
+        )

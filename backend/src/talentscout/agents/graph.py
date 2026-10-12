@@ -14,6 +14,7 @@ from talentscout.agents.assessment_report import (
     AssessmentReportAgent,
     AssessmentReportRequest,
 )
+from talentscout.agents.interview_types import InterviewTurn
 from talentscout.agents.role_competency import (
     RoleCompetencyAgent,
     RoleCompetencyAnalysis,
@@ -26,6 +27,7 @@ from talentscout.llm.service import LLMService
 # Maximum number of evaluated interview turns for the MVP.
 # This prevents an interview from continuing indefinitely.
 MAX_INTERVIEW_TURNS = 8
+
 
 async def analyze_role(
     state: InterviewState,
@@ -44,11 +46,16 @@ async def analyze_role(
         "role_competency_analysis": analysis,
     }
 
+
 async def evaluate_answer(
     state: InterviewState,
     answer_evaluation_agent: AnswerEvaluationAgent,
 ) -> InterviewState:
     """Evaluate the answer and update interview progress."""
+    question = state.get("current_question")
+    if question is None:
+        raise ValueError("Cannot evaluate a candidate answer without a current question.")
+
     interview_history = list(state.get("interview_history", []))
     turn_number = len(interview_history) + 1
 
@@ -69,14 +76,12 @@ async def evaluate_answer(
     # Calculate the competencies that still need evidence before evaluating
     # the current answer.
     remaining_before_evaluation = [
-        name
-        for name in competency_names
-        if name not in previously_assessed_set
+        name for name in competency_names if name not in previously_assessed_set
     ]
 
     evaluation = await answer_evaluation_agent.evaluate(
         AnswerEvaluationRequest(
-            question=state["current_question"],
+            question=question,
             candidate_answer=state["candidate_answer"],
             role_competency_analysis=state["role_competency_analysis"],
             turn_number=turn_number,
@@ -88,7 +93,7 @@ async def evaluate_answer(
     # The answer is now a completed interview turn because it has been evaluated.
     interview_history.append(
         {
-            "question": state["current_question"],
+            "question": question,
             "candidate_answer": state["candidate_answer"],
             "evaluation": evaluation,
         }
@@ -96,16 +101,13 @@ async def evaluate_answer(
 
     # Include competencies addressed by the current answer.
     assessed_after_evaluation = sorted(
-        previously_assessed_set
-        | set(evaluation.assessed_competencies)
+        previously_assessed_set | set(evaluation.assessed_competencies)
     )
 
     assessed_after_set = set(assessed_after_evaluation)
 
     remaining_after_evaluation = [
-        name
-        for name in competency_names
-        if name not in assessed_after_set
+        name for name in competency_names if name not in assessed_after_set
     ]
 
     # The evaluator decides whether enough evidence has been collected.
@@ -113,8 +115,7 @@ async def evaluate_answer(
     # already-assessed competency can still contain unresolved gaps.
     # The turn limit remains a hard safety boundary.
     interview_complete = (
-        evaluation.next_action is InterviewDecision.COMPLETE
-        or turn_number >= MAX_INTERVIEW_TURNS
+        evaluation.next_action is InterviewDecision.COMPLETE or turn_number >= MAX_INTERVIEW_TURNS
     )
 
     return {
@@ -125,6 +126,7 @@ async def evaluate_answer(
         "remaining_competencies": remaining_after_evaluation,
         "interview_complete": interview_complete,
     }
+
 
 class InterviewerAgent:
     """Generate an interview question using job and document context."""
@@ -153,7 +155,7 @@ class InterviewerAgent:
         interview_history = state.get("interview_history", [])
         answer_evaluation = state.get("answer_evaluation")
         assessed_competencies = state.get("assessed_competencies", [])
-        remaining_competencies = state.get("remaining_competencies", [])        
+        remaining_competencies = state.get("remaining_competencies", [])
 
         # For the first question, retrieve documents using the JD.
         # For later questions, use the JD together with the candidate's
@@ -210,6 +212,7 @@ class InterviewerAgent:
 
         return {
             **state,
+            "candidate_answer": "",
             "retrieved_context": retrieved_context,
             "current_question": question,
             "interview_history": interview_history,
@@ -221,7 +224,7 @@ class InterviewerAgent:
         role_competency_analysis: RoleCompetencyAnalysis,
         retrieved_context: list[str],
         candidate_answer: str,
-        interview_history: list,
+        interview_history: list[InterviewTurn],
         answer_evaluation: AnswerEvaluation | None,
         assessed_competencies: list[str],
         remaining_competencies: list[str],
@@ -282,7 +285,6 @@ class InterviewerAgent:
         )
 
 
-
 def build_interview_graph(
     retriever: DocumentRetriever,
     llm: LLMService,
@@ -300,13 +302,9 @@ def build_interview_graph(
 
     role_agent = role_competency_agent or RoleCompetencyAgent(llm=llm)
 
-    evaluation_agent = (
-        answer_evaluation_agent or AnswerEvaluationAgent(llm=llm)
-    )
+    evaluation_agent = answer_evaluation_agent or AnswerEvaluationAgent(llm=llm)
 
-    report_agent = (
-        assessment_report_agent or AssessmentReportAgent(llm=llm)
-    )    
+    report_agent = assessment_report_agent or AssessmentReportAgent(llm=llm)
 
     graph = StateGraph(InterviewState)
 
@@ -362,7 +360,7 @@ def build_interview_graph(
         return {
             **state,
             "assessment_report": report,
-        }    
+        }
 
     graph.add_node(
         "role_competency",
@@ -372,12 +370,12 @@ def build_interview_graph(
     graph.add_node(
         "answer_evaluation",
         answer_evaluation_node,
-    )   
+    )
 
     graph.add_node(
         "assessment_report",
         assessment_report_node,
-    )     
+    )
 
     # Generate the interview question using the role analysis and retrieved context.
     graph.add_node(
@@ -400,7 +398,7 @@ def build_interview_graph(
         if state.get("interview_complete", False):
             return "report"
 
-        return "interviewer"        
+        return "interviewer"
 
     graph.add_conditional_edges(
         START,

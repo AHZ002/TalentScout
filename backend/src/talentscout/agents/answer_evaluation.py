@@ -16,11 +16,12 @@ class EvaluationLevel(StrEnum):
     PARTIAL = "partial"
     INSUFFICIENT = "insufficient"
 
+
 class InterviewDecision(StrEnum):
     """Describe whether the interview should continue or finish."""
 
     CONTINUE = "continue"
-    COMPLETE = "complete"    
+    COMPLETE = "complete"
 
 
 class AnswerEvaluationRequest(BaseModel):
@@ -34,9 +35,7 @@ class AnswerEvaluationRequest(BaseModel):
 
     # Progress from previous completed interview turns.
     turn_number: int = Field(ge=1, le=50)
-    previously_assessed_competencies: list[str] = Field(
-        max_length=20
-    )
+    previously_assessed_competencies: list[str] = Field(max_length=20)
     remaining_competencies: list[str] = Field(max_length=20)
 
 
@@ -61,7 +60,7 @@ class AnswerEvaluation(BaseModel):
     next_action: InterviewDecision
 
     # Concise evidence-based reason for the routing recommendation.
-    decision_reason: str = Field(min_length=1, max_length=1_000)    
+    decision_reason: str = Field(min_length=1, max_length=1_000)
 
 
 class AnswerEvaluationAgent:
@@ -107,9 +106,7 @@ class AnswerEvaluationAgent:
         request: AnswerEvaluationRequest,
     ) -> str:
         """Build a grounded evaluation prompt from the interview context."""
-        competency_text = request.role_competency_analysis.model_dump_json(
-            indent=2
-        )
+        competency_text = request.role_competency_analysis.model_dump_json(indent=2)
 
         return (
             "<interview_question>\n"

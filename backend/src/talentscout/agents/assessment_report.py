@@ -1,6 +1,5 @@
 """Generate the final evidence-based assessment report for an interview."""
 
-
 from pydantic import BaseModel, ConfigDict, Field
 
 from talentscout.agents.answer_evaluation import EvaluationLevel
@@ -82,9 +81,7 @@ class AssessmentReportAgent:
         request: AssessmentReportRequest,
     ) -> str:
         """Build the grounded report prompt from the completed interview."""
-        competency_text = request.role_competency_analysis.model_dump_json(
-            indent=2
-        )
+        competency_text = request.role_competency_analysis.model_dump_json(indent=2)
 
         history_text = "\n\n".join(
             (

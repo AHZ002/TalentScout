@@ -43,9 +43,7 @@ def test_question_prompt_uses_job_guidance_and_role_competencies() -> None:
     )
 
     prompt = InterviewerAgent._build_prompt(
-        job_description=(
-            "Build reliable PostgreSQL-backed services."
-        ),
+        job_description=("Build reliable PostgreSQL-backed services."),
         role_competency_analysis=role_competency_analysis,
         retrieved_context=[
             "Assess connection-pool sizing and failure handling.",
@@ -54,7 +52,7 @@ def test_question_prompt_uses_job_guidance_and_role_competencies() -> None:
         interview_history=[],
         answer_evaluation=None,
         assessed_competencies=[],
-        remaining_competencies=["Database scalability"],        
+        remaining_competencies=["Database scalability"],
     )
 
     assert "Required role competencies" in prompt
@@ -67,4 +65,4 @@ def test_question_prompt_uses_job_guidance_and_role_competencies() -> None:
     assert "company context" not in prompt.lower()
     assert "Assessed competencies" in prompt
     assert "Remaining competencies" in prompt
-    assert "Database scalability" in prompt    
+    assert "Database scalability" in prompt

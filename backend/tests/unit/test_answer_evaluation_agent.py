@@ -16,13 +16,7 @@ from talentscout.agents.role_competency import (
     RequirementSource,
     RoleCompetencyAnalysis,
 )
-from talentscout.agents.answer_evaluation import (
-    AnswerEvaluation,
-    AnswerEvaluationAgent,
-    AnswerEvaluationRequest,
-    EvaluationLevel,
-    InterviewDecision,
-)
+
 
 class FakeLLM:
     """Return deterministic structured evaluation output."""
@@ -49,12 +43,10 @@ class FakeLLM:
             demonstrated_competencies=["Python backend development"],
             strengths=["Clear layered architecture reasoning."],
             gaps=["Did not discuss error handling."],
-            evidence=[
-                "Candidate described separating API, service, and repository layers."
-            ],
+            evidence=["Candidate described separating API, service, and repository layers."],
             assessed_competencies=["Python backend development"],
             next_action=InterviewDecision.CONTINUE,
-            decision_reason="Further evidence is needed on error handling.",            
+            decision_reason="Further evidence is needed on error handling.",
             confidence=0.9,
         )
 
@@ -91,9 +83,7 @@ async def test_answer_evaluation_agent_returns_structured_evaluation() -> None:
     result = await agent.evaluate(
         AnswerEvaluationRequest(
             question="How would you design a FastAPI service?",
-            candidate_answer=(
-                "I would separate the API, service, and repository layers."
-            ),
+            candidate_answer=("I would separate the API, service, and repository layers."),
             role_competency_analysis=role_analysis,
             turn_number=1,
             previously_assessed_competencies=[],
@@ -104,11 +94,7 @@ async def test_answer_evaluation_agent_returns_structured_evaluation() -> None:
     assert llm.call_count == 1
     assert llm.response_model is AnswerEvaluation
     assert result.correctness is EvaluationLevel.STRONG
-    assert result.demonstrated_competencies == [
-        "Python backend development"
-    ]
-    assert result.assessed_competencies == [
-        "Python backend development"
-    ]
-    assert result.next_action is InterviewDecision.CONTINUE    
+    assert result.demonstrated_competencies == ["Python backend development"]
+    assert result.assessed_competencies == ["Python backend development"]
+    assert result.next_action is InterviewDecision.CONTINUE
     assert result.confidence == 0.9

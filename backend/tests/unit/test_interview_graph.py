@@ -70,7 +70,8 @@ class FakeDocumentChunk:
     def __init__(self, text: str) -> None:
         """Initialize a fake retrieved document chunk."""
         self.text = text
-        
+
+
 class FakeRetriever:
     """Return deterministic retrieval results without accessing the database."""
 
@@ -92,7 +93,8 @@ class FakeRetriever:
             FakeDocumentChunk(
                 text="Focus on designing resilient FastAPI APIs.",
             )
-        ]        
+        ]
+
 
 class FakeAnswerEvaluationAgent(AnswerEvaluationAgent):
     """Return deterministic answer evaluations without calling an LLM."""
@@ -105,9 +107,7 @@ class FakeAnswerEvaluationAgent(AnswerEvaluationAgent):
         """Initialize the fake evaluator and call tracking."""
         self.call_count = 0
         self.next_action = next_action
-        self.assessed_competencies = assessed_competencies or [
-            "Python backend development"
-        ]
+        self.assessed_competencies = assessed_competencies or ["Python backend development"]
 
     async def evaluate(self, request) -> AnswerEvaluation:
         """Return a deterministic answer evaluation."""
@@ -123,9 +123,10 @@ class FakeAnswerEvaluationAgent(AnswerEvaluationAgent):
             evidence=["Candidate described separating API and service layers."],
             assessed_competencies=self.assessed_competencies,
             next_action=self.next_action,
-            decision_reason="Deterministic test routing decision.",            
+            decision_reason="Deterministic test routing decision.",
             confidence=0.9,
         )
+
 
 class FakeAssessmentReportAgent(AssessmentReportAgent):
     """Return a deterministic final assessment without calling an LLM."""
@@ -153,7 +154,8 @@ class FakeAssessmentReportAgent(AssessmentReportAgent):
             follow_up_areas=["Exception handling."],
             confidence=0.9,
         )
-        
+
+
 class FakeLLM:
     """Return a deterministic interview question without calling an LLM provider."""
 
@@ -172,7 +174,7 @@ class FakeLLM:
         self.call_count += 1
         self.system_prompts.append(system_prompt)
         self.user_prompts.append(user_prompt)
-                
+
         return "How would you design a FastAPI service for this role?"
 
 
@@ -193,9 +195,7 @@ async def test_interview_graph_reuses_initial_retrieval() -> None:
 
     initial_state: InterviewState = {
         "job_id": job_id,
-        "job_description": (
-            "Build backend services using Python and FastAPI."
-        ),
+        "job_description": ("Build backend services using Python and FastAPI."),
     }
 
     result = await graph.ainvoke(initial_state)
@@ -209,21 +209,14 @@ async def test_interview_graph_reuses_initial_retrieval() -> None:
         "Focus on designing resilient FastAPI APIs."
     ]
 
-    assert result["retrieved_context"] == [
-        "Focus on designing resilient FastAPI APIs."
-    ]
+    assert result["retrieved_context"] == ["Focus on designing resilient FastAPI APIs."]
 
-    assert result["role_competency_analysis"].role_summary == (
-        "Python backend engineer"
-    )
+    assert result["role_competency_analysis"].role_summary == ("Python backend engineer")
 
-    assert result["current_question"] == (
-        "How would you design a FastAPI service for this role?"
-    )
+    assert result["current_question"] == ("How would you design a FastAPI service for this role?")
 
-    assert result["current_question"] == (
-        "How would you design a FastAPI service for this role?"
-    )
+    assert result["current_question"] == ("How would you design a FastAPI service for this role?")
+
 
 @pytest.mark.asyncio
 async def test_interview_graph_handles_initial_and_follow_up_turns() -> None:
@@ -244,9 +237,7 @@ async def test_interview_graph_handles_initial_and_follow_up_turns() -> None:
 
     initial_state: InterviewState = {
         "job_id": job_id,
-        "job_description": (
-            "Build backend services using Python and FastAPI."
-        ),
+        "job_description": ("Build backend services using Python and FastAPI."),
     }
 
     first_result = await graph.ainvoke(initial_state)
@@ -255,16 +246,14 @@ async def test_interview_graph_handles_initial_and_follow_up_turns() -> None:
     assert role_agent.call_count == 1
     assert retriever.call_count == 1
     assert llm.call_count == 1
-    assert evaluation_agent.call_count == 0    
+    assert evaluation_agent.call_count == 0
 
     assert role_agent.last_request is not None
     assert role_agent.last_request.additional_guidance == [
         "Focus on designing resilient FastAPI APIs."
     ]
 
-    assert first_result["retrieved_context"] == [
-        "Focus on designing resilient FastAPI APIs."
-    ]
+    assert first_result["retrieved_context"] == ["Focus on designing resilient FastAPI APIs."]
 
     assert first_result["interview_history"] == []
 
@@ -272,15 +261,12 @@ async def test_interview_graph_handles_initial_and_follow_up_turns() -> None:
         "How would you design a FastAPI service for this role?"
     )
 
-    assert "No previous answer has been evaluated yet." in (
-        llm.user_prompts[0]
-    )
+    assert "No previous answer has been evaluated yet." in (llm.user_prompts[0])
 
     follow_up_state: InterviewState = {
         **first_result,
         "candidate_answer": (
-            "I would use a layered architecture with separate API, "
-            "service, and repository layers."
+            "I would use a layered architecture with separate API, service, and repository layers."
         ),
     }
 
@@ -294,34 +280,25 @@ async def test_interview_graph_handles_initial_and_follow_up_turns() -> None:
     assert llm.call_count == 2
     assert evaluation_agent.call_count == 1
     assert second_result["interview_complete"] is False
-    assert second_result["assessed_competencies"] == [
-        "Python backend development"
-    ]
-    assert second_result["remaining_competencies"] == [
-        "API resilience"
-    ]    
+    assert second_result["assessed_competencies"] == ["Python backend development"]
+    assert second_result["remaining_competencies"] == ["API resilience"]
 
-    assert second_result["answer_evaluation"].correctness is (
-        EvaluationLevel.STRONG
-    )  
+    assert second_result["answer_evaluation"].correctness is (EvaluationLevel.STRONG)
+
+    # The answer has been evaluated and recorded, so it must not remain pending.
+    assert second_result.get("candidate_answer", "") == ""
 
     assert "Error handling was not discussed." in llm.user_prompts[1]
-    assert (
-        "Candidate described separating API and service layers."
-        in llm.user_prompts[1]
-    )
+    assert "Candidate described separating API and service layers." in llm.user_prompts[1]
 
     assert (
         "I would use a layered architecture with separate API, "
-        "service, and repository layers."
-        in llm.user_prompts[1]
-    )          
+        "service, and repository layers." in llm.user_prompts[1]
+    )
 
     assert second_result["interview_history"] == [
         {
-            "question": (
-                "How would you design a FastAPI service for this role?"
-            ),
+            "question": ("How would you design a FastAPI service for this role?"),
             "candidate_answer": (
                 "I would use a layered architecture with separate API, "
                 "service, and repository layers."
@@ -333,6 +310,7 @@ async def test_interview_graph_handles_initial_and_follow_up_turns() -> None:
     assert second_result["current_question"] == (
         "How would you design a FastAPI service for this role?"
     )
+
 
 @pytest.mark.asyncio
 async def test_interview_graph_generates_report_when_interview_is_complete() -> None:
@@ -357,18 +335,14 @@ async def test_interview_graph_generates_report_when_interview_is_complete() -> 
 
     initial_state: InterviewState = {
         "job_id": job_id,
-        "job_description": (
-            "Build backend services using Python and FastAPI."
-        ),
+        "job_description": ("Build backend services using Python and FastAPI."),
     }
 
     first_result = await graph.ainvoke(initial_state)
 
     final_state: InterviewState = {
         **first_result,
-        "candidate_answer": (
-            "I would separate the API, service, and repository layers."
-        ),
+        "candidate_answer": ("I would separate the API, service, and repository layers."),
     }
 
     result = await graph.ainvoke(final_state)
@@ -387,6 +361,7 @@ async def test_interview_graph_generates_report_when_interview_is_complete() -> 
     assert result["assessment_report"].overall_summary == (
         "Candidate demonstrated strong backend fundamentals."
     )
+
 
 @pytest.mark.asyncio
 async def test_interview_graph_continues_when_all_competencies_are_assessed() -> None:
@@ -412,9 +387,7 @@ async def test_interview_graph_continues_when_all_competencies_are_assessed() ->
 
     initial_state: InterviewState = {
         "job_id": job_id,
-        "job_description": (
-            "Build backend services using Python and FastAPI."
-        ),
+        "job_description": ("Build backend services using Python and FastAPI."),
     }
 
     # Generate the first question.
@@ -424,8 +397,7 @@ async def test_interview_graph_continues_when_all_competencies_are_assessed() ->
     follow_up_state: InterviewState = {
         **first_result,
         "candidate_answer": (
-            "I would use structured exception handling and "
-            "centralized error responses."
+            "I would use structured exception handling and centralized error responses."
         ),
     }
 
@@ -439,9 +411,7 @@ async def test_interview_graph_continues_when_all_competencies_are_assessed() ->
 
     # The interviewer must generate the next question.
     assert llm.call_count == 2
-    assert result["current_question"] == (
-        "How would you design a FastAPI service for this role?"
-    )
+    assert result["current_question"] == ("How would you design a FastAPI service for this role?")
 
     # A final report must not be generated while the evaluator says CONTINUE.
     assert report_agent.call_count == 0

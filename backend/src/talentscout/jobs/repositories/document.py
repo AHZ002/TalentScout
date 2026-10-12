@@ -29,16 +29,12 @@ class DocumentRepository:
 
     async def get_by_id(self, document_id: UUID) -> Document | None:
         """Find a document by its ID."""
-        result = await self.session.execute(
-            select(Document).where(Document.id == document_id)
-        )
+        result = await self.session.execute(select(Document).where(Document.id == document_id))
         return result.scalar_one_or_none()
 
     async def list_by_job(self, job_id: UUID) -> list[Document]:
         """Return all documents associated with a job."""
         result = await self.session.execute(
-            select(Document)
-            .where(Document.job_id == job_id)
-            .order_by(Document.created_at)
+            select(Document).where(Document.job_id == job_id).order_by(Document.created_at)
         )
         return list(result.scalars().all())
