@@ -31,6 +31,10 @@ class InvalidInterviewStateError(ValueError):
     """Raised when interview state conflicts with its session or lifecycle."""
 
 
+class InterviewSessionConflictError(RuntimeError):
+    """Raised when another request changes the session during processing."""
+
+
 class InterviewSessionService:
     """Coordinate job validation, state validation, and session persistence."""
 
@@ -97,9 +101,12 @@ class InterviewSessionService:
         self,
         session_id: UUID,
         state: InterviewState,
+        *,
+        expected_state: dict[str, object],
     ) -> InterviewSession:
-        """Validate and persist graph state, updating status when a report exists."""
+        """Validate and persist state only if the session has not changed."""
         interview_session = await self.get_session(session_id)
+
         if interview_session is None:
             raise InterviewSessionNotFoundError(f"Interview session '{session_id}' was not found.")
 
@@ -114,26 +121,37 @@ class InterviewSessionService:
             expected_job_id=interview_session.job_id,
         )
 
-        # The job description is the source-of-truth snapshot captured at session creation.
+        # The job description is the source-of-truth snapshot captured at
+        # session creation and must remain unchanged throughout the interview.
         if validated_state["job_description"] != previous_state["job_description"]:
             raise InvalidInterviewStateError(
                 "The job description cannot change during an interview session."
             )
 
-        self._validate_lifecycle(
-            InterviewSessionStatus.COMPLETED
-            if validated_state.get("interview_complete", False)
-            else InterviewSessionStatus.IN_PROGRESS,
-            validated_state,
-        )
-
-        interview_session.state = serialize_interview_state(validated_state)
-        interview_session.status = (
+        new_status = (
             InterviewSessionStatus.COMPLETED
             if validated_state.get("interview_complete", False)
             else InterviewSessionStatus.IN_PROGRESS
         )
-        return await self.session_repository.update(interview_session)
+
+        self._validate_lifecycle(new_status, validated_state)
+
+        # The repository compares expected_state and updates the row in one
+        # SQL statement. Never overwrite the ORM object before that check.
+        saved_session = await self.session_repository.update_if_unchanged(
+            interview_session,
+            expected_state=expected_state,
+            new_state=serialize_interview_state(validated_state),
+            new_status=new_status,
+        )
+
+        if saved_session is None:
+            raise InterviewSessionConflictError(
+                "The interview session changed while the answer was being "
+                "processed. Retrieve the latest session state before retrying."
+            )
+
+        return saved_session
 
     @staticmethod
     def _validate_state(

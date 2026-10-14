@@ -14,6 +14,7 @@ from talentscout.db.models.interview_session import (
 )
 from talentscout.jobs.services.interview_session import (
     InterviewSessionAlreadyCompletedError,
+    InterviewSessionConflictError,
     InterviewSessionNotFoundError,
     InterviewSessionService,
     InvalidInterviewStateError,
@@ -59,7 +60,20 @@ def service_dependencies() -> tuple[InterviewSessionService, AsyncMock, AsyncMoc
     session_repository = AsyncMock(spec=InterviewSessionRepository)
     job_repository = AsyncMock(spec=JobRepository)
     session_repository.create.side_effect = lambda value: value
-    session_repository.update.side_effect = lambda value: value
+
+    async def persist_if_unchanged(
+        interview_session: InterviewSession,
+        *,
+        expected_state: dict[str, object],
+        new_state: dict[str, object],
+        new_status: InterviewSessionStatus,
+    ) -> InterviewSession:
+        """Simulate a successful conditional persistence operation."""
+        interview_session.state = new_state
+        interview_session.status = new_status
+        return interview_session
+
+    session_repository.update_if_unchanged.side_effect = persist_if_unchanged
     service = InterviewSessionService(session_repository, job_repository)
     return service, session_repository, job_repository
 
@@ -175,12 +189,61 @@ async def test_save_state_marks_session_completed_with_report(
     final_state["interview_complete"] = True
     final_state["assessment_report"] = _assessment_report()
 
-    saved_session = await service.save_state(session_id, final_state)
+    expected_state = dict(session.state)
+
+    saved_session = await service.save_state(
+        session_id,
+        final_state,
+        expected_state=expected_state,
+    )
 
     assert saved_session.status == InterviewSessionStatus.COMPLETED
     assert saved_session.state["interview_complete"] is True
     assert "assessment_report" in saved_session.state
-    session_repository.update.assert_awaited_once_with(session)
+    session_repository.update_if_unchanged.assert_awaited_once_with(
+        session,
+        expected_state=expected_state,
+        new_state=saved_session.state,
+        new_status=InterviewSessionStatus.COMPLETED,
+    )
+
+
+@pytest.mark.asyncio
+async def test_save_state_rejects_concurrent_modification(
+    service_dependencies: tuple[InterviewSessionService, AsyncMock, AsyncMock],
+) -> None:
+    """A stale graph result must not overwrite a concurrently changed session."""
+    service, session_repository, _ = service_dependencies
+    job_id = uuid4()
+    session_id = uuid4()
+
+    session = InterviewSession(
+        id=session_id,
+        job_id=job_id,
+        status=InterviewSessionStatus.IN_PROGRESS,
+        state={
+            "job_id": str(job_id),
+            "job_description": "Build Python backend services.",
+            "interview_history": [],
+            "retrieved_context": [],
+        },
+    )
+    session_repository.get_by_id.return_value = session
+
+    # Simulate the atomic UPDATE finding no row matching the original snapshot.
+    session_repository.update_if_unchanged.side_effect = None
+    session_repository.update_if_unchanged.return_value = None
+
+    expected_state = dict(session.state)
+
+    with pytest.raises(InterviewSessionConflictError, match="changed"):
+        await service.save_state(
+            session_id,
+            _initial_state(job_id),
+            expected_state=expected_state,
+        )
+
+    session_repository.update_if_unchanged.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -203,10 +266,16 @@ async def test_save_state_rejects_state_for_another_job(
         },
     )
 
-    with pytest.raises(InvalidInterviewStateError, match="does not match"):
-        await service.save_state(session_id, _initial_state(uuid4()))
+    expected_state = dict(session_repository.get_by_id.return_value.state)
 
-    session_repository.update.assert_not_awaited()
+    with pytest.raises(InvalidInterviewStateError, match="does not match"):
+        await service.save_state(
+            session_id,
+            _initial_state(uuid4()),
+            expected_state=expected_state,
+        )
+
+    session_repository.update_if_unchanged.assert_not_awaited()
 
 
 @pytest.mark.asyncio

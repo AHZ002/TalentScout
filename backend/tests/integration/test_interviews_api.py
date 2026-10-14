@@ -1,5 +1,6 @@
 """Integration tests for interview-session HTTP endpoints and persistence."""
 
+import asyncio
 from uuid import UUID, uuid4
 
 import pytest
@@ -57,6 +58,30 @@ class FakeInterviewGraph:
         result.setdefault("interview_history", [])
         result.setdefault("retrieved_context", [])
         return result
+
+
+class ConcurrentFakeInterviewGraph(FakeInterviewGraph):
+    """Hold two answer requests until both have loaded their session state."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.answer_calls = 0
+        self.both_answers_started = asyncio.Event()
+
+    async def ainvoke(self, state: InterviewState) -> InterviewState:
+        """Synchronize concurrent answer processing for a deterministic test."""
+        if state.get("candidate_answer"):
+            self.answer_calls += 1
+
+            if self.answer_calls == 2:
+                self.both_answers_started.set()
+
+            await asyncio.wait_for(
+                self.both_answers_started.wait(),
+                timeout=10,
+            )
+
+        return await super().ainvoke(state)
 
 
 @pytest.mark.integration
@@ -260,6 +285,77 @@ async def test_completed_interview_persists_report_and_rejects_new_answers() -> 
             assert final_response.status_code == 200
             assert final_response.json()["assessment_report"] == completed["assessment_report"]
             assert final_response.json()["status"] == "completed"
+    finally:
+        if previous_override is None:
+            app.dependency_overrides.pop(get_interview_graph, None)
+        else:
+            app.dependency_overrides[get_interview_graph] = previous_override
+
+        if job_id is not None:
+            async with SessionFactory() as session:
+                await session.execute(delete(Job).where(Job.id == job_id))
+                await session.commit()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_concurrent_answers_cannot_overwrite_session_state() -> None:
+    """Only one answer request based on the same snapshot may succeed."""
+    fake_graph = ConcurrentFakeInterviewGraph()
+
+    async def override_interview_graph() -> ConcurrentFakeInterviewGraph:
+        """Return the synchronized graph used by this test."""
+        return fake_graph
+
+    previous_override = app.dependency_overrides.get(get_interview_graph)
+    app.dependency_overrides[get_interview_graph] = override_interview_graph
+
+    job_id: UUID | None = None
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            job_response = await client.post(
+                "/jobs",
+                json={
+                    "title": "Concurrency Test Engineer",
+                    "description": "Build backend services using Python and FastAPI.",
+                },
+            )
+            assert job_response.status_code == 201
+            job_id = UUID(job_response.json()["id"])
+
+            start_response = await client.post(f"/jobs/{job_id}/interviews")
+            assert start_response.status_code == 201
+
+            session_id = UUID(start_response.json()["id"])
+
+            # Both requests begin from the same persisted interview state.
+            responses = await asyncio.gather(
+                client.post(
+                    f"/interviews/{session_id}/answers",
+                    json={"candidate_answer": "Answer from request A."},
+                ),
+                client.post(
+                    f"/interviews/{session_id}/answers",
+                    json={"candidate_answer": "Answer from request B."},
+                ),
+            )
+
+            assert fake_graph.answer_calls == 2
+            assert sorted(response.status_code for response in responses) == [
+                200,
+                409,
+            ]
+
+            # Confirm the session remains readable after the conflict.
+            persisted_response = await client.get(f"/interviews/{session_id}")
+            assert persisted_response.status_code == 200
+            assert persisted_response.json()["current_question"] == (
+                "How would you test a FastAPI endpoint?"
+            )
     finally:
         if previous_override is None:
             app.dependency_overrides.pop(get_interview_graph, None)

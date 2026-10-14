@@ -1,6 +1,7 @@
 """FastAPI endpoints for starting and continuing candidate interviews."""
 
 from collections.abc import AsyncIterator
+from copy import deepcopy
 from typing import Any, cast
 from uuid import UUID
 
@@ -25,6 +26,7 @@ from talentscout.jobs.schemas.interview_session import (
 )
 from talentscout.jobs.services.interview_session import (
     InterviewSessionAlreadyCompletedError,
+    InterviewSessionConflictError,
     InterviewSessionNotFoundError,
     InterviewSessionService,
     JobNotFoundError,
@@ -100,8 +102,23 @@ async def start_interview(
         ) from exc
 
     interview_session, state = await service.resume_session(interview_session.id)
+
+    # Preserve the exact database snapshot before the graph processes it.
+    expected_state = deepcopy(interview_session.state)
+
     result = cast(InterviewState, await graph.ainvoke(state))
-    saved_session = await service.save_state(interview_session.id, result)
+
+    try:
+        saved_session = await service.save_state(
+            interview_session.id,
+            result,
+            expected_state=expected_state,
+        )
+    except InterviewSessionConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Interview session changed while processing. Please retry.",
+        ) from exc
 
     return build_session_response(saved_session, result)
 
@@ -151,8 +168,25 @@ async def submit_interview_answer(
             detail="Interview session is already completed",
         ) from exc
 
+    # Capture the persisted state before modifying the graph input.
+    expected_state = deepcopy(interview_session.state)
+
     state["candidate_answer"] = data.candidate_answer
     result = cast(InterviewState, await graph.ainvoke(state))
-    saved_session = await service.save_state(interview_session.id, result)
+
+    try:
+        saved_session = await service.save_state(
+            interview_session.id,
+            result,
+            expected_state=expected_state,
+        )
+    except InterviewSessionConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Interview session was modified by another request. "
+                "Retrieve the latest session state before submitting another answer."
+            ),
+        ) from exc
 
     return build_session_response(saved_session, result)
