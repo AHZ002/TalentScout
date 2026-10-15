@@ -23,3 +23,7 @@ class JobService:
     async def get_job(self, job_id: UUID) -> Job | None:
         """Retrieve a hiring job by ID."""
         return await self.repository.get_by_id(job_id)
+
+    async def list_jobs(self) -> list[Job]:
+        """Retrieve all hiring jobs for the recruiter dashboard."""
+        return await self.repository.list_all()

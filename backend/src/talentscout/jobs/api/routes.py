@@ -51,3 +51,13 @@ async def get_job(
         )
 
     return job
+
+@router.get(
+    "",
+    response_model=list[JobResponse],
+)
+async def list_jobs(
+    service: JobService = Depends(get_job_service),
+) -> list[Job]:
+    """List hiring jobs for the recruiter dashboard."""
+    return await service.list_jobs()

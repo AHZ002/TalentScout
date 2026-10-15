@@ -23,3 +23,10 @@ class JobRepository:
         """Find a job by its ID."""
         result = await self.session.execute(select(Job).where(Job.id == job_id))
         return result.scalar_one_or_none()
+
+    async def list_all(self) -> list[Job]:
+        """Return hiring jobs, newest first."""
+        result = await self.session.execute(
+            select(Job).order_by(Job.created_at.desc())
+        )
+        return list(result.scalars().all())
