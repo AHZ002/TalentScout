@@ -1,5 +1,7 @@
 """Generate the final evidence-based assessment report for an interview."""
 
+import json
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from talentscout.agents.answer_evaluation import EvaluationLevel
@@ -80,17 +82,28 @@ class AssessmentReportAgent:
     def _build_user_prompt(
         request: AssessmentReportRequest,
     ) -> str:
-        """Build the grounded report prompt from the completed interview."""
-        competency_text = request.role_competency_analysis.model_dump_json(indent=2)
+        """Build a compact, grounded report prompt from interview evidence."""
+        competency_data = request.role_competency_analysis.model_dump(mode="json")
 
-        history_text = "\n\n".join(
-            (
-                f"Question: {turn['question']}\n"
-                f"Candidate answer: {turn['candidate_answer']}\n"
-                "Answer evaluation:\n"
-                f"{turn['evaluation'].model_dump_json(indent=2)}"
-            )
+        history_data = [
+            {
+                "question": turn["question"],
+                "candidate_answer": turn["candidate_answer"],
+                "evaluation": turn["evaluation"].model_dump(mode="json"),
+            }
             for turn in request.interview_history
+        ]
+
+        competency_text = json.dumps(
+            competency_data,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+
+        history_text = json.dumps(
+            history_data,
+            separators=(",", ":"),
+            ensure_ascii=False,
         )
 
         return (

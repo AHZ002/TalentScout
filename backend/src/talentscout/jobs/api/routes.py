@@ -52,6 +52,7 @@ async def get_job(
 
     return job
 
+
 @router.get(
     "",
     response_model=list[JobResponse],

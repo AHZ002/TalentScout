@@ -1,1 +1,18 @@
 Generic single-database configuration with an async dbapi.
+
+
+Open two separate PowerShell terminals from the project root.
+
+Terminal 1 — Backend
+.\.venv\Scripts\python -m uvicorn talentscout.api.main:app --reload --app-dir backend/src
+
+
+Requires your configured database and backend .env.
+
+
+Terminal 2 — Frontend
+cd frontend
+npm run dev
+
+
+Open the local URL Vite prints, normally http://localhost:5173

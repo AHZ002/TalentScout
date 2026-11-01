@@ -31,7 +31,7 @@ from talentscout.jobs.services.interview_session import (
     InterviewSessionService,
     JobNotFoundError,
 )
-from talentscout.llm.groq import GroqLLMService
+from talentscout.llm.groq import GroqLLMService, GroqServiceError
 
 router = APIRouter(tags=["interviews"])
 
@@ -82,6 +82,26 @@ def build_session_response(
     )
 
 
+async def invoke_interview_graph(
+    graph: Any,
+    state: InterviewState,
+) -> InterviewState:
+    """Invoke the interview graph and translate Groq failures into API errors."""
+    try:
+        result = await graph.ainvoke(state)
+    except GroqServiceError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={
+                "code": exc.error_code,
+                "message": exc.public_message,
+                "retryable": exc.retryable,
+            },
+        ) from exc
+
+    return cast(InterviewState, result)
+
+
 @router.post(
     "/jobs/{job_id}/interviews",
     response_model=InterviewSessionResponse,
@@ -106,7 +126,7 @@ async def start_interview(
     # Preserve the exact database snapshot before the graph processes it.
     expected_state = deepcopy(interview_session.state)
 
-    result = cast(InterviewState, await graph.ainvoke(state))
+    result = await invoke_interview_graph(graph, state)
 
     try:
         saved_session = await service.save_state(
@@ -172,7 +192,7 @@ async def submit_interview_answer(
     expected_state = deepcopy(interview_session.state)
 
     state["candidate_answer"] = data.candidate_answer
-    result = cast(InterviewState, await graph.ainvoke(state))
+    result = await invoke_interview_graph(graph, state)
 
     try:
         saved_session = await service.save_state(

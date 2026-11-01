@@ -50,10 +50,7 @@ async def test_create_and_get_job() -> None:
             assert list_response.status_code == 200
             listed_jobs = list_response.json()
             assert isinstance(listed_jobs, list)
-            assert any(
-                listed_job["id"] == created_job["id"]
-                for listed_job in listed_jobs
-            )            
+            assert any(listed_job["id"] == created_job["id"] for listed_job in listed_jobs)
 
             rejected_response = await client.post(
                 "/jobs",

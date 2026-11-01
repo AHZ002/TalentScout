@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from talentscout.api.routes.health import router as health_router
 from talentscout.config.settings import get_settings
@@ -16,6 +17,14 @@ def create_app() -> FastAPI:
         version=settings.app_version,
         description="Agentic AI platform for adaptive technical screening.",
         debug=settings.debug,
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type"],
     )
 
     app.include_router(health_router)

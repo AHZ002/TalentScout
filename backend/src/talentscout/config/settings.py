@@ -29,6 +29,15 @@ class Settings(BaseSettings):
         default="postgresql+psycopg://talentscout:talentscout@localhost:5432/talentscout",
         min_length=1,
     )
+
+    # Browser origins allowed to call the API.
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ],
+    )
+
     # API key used to generate document embeddings with Jina AI.
     jina_api_key: str = Field(default="")
 
@@ -47,6 +56,23 @@ class Settings(BaseSettings):
 
     # LLM used for interview question generation and later agent tasks.
     llm_model: str = Field(default="openai/gpt-oss-20b")
+
+    # Maximum number of retries after the initial Groq request.
+    llm_max_retries: int = Field(default=2, ge=0, le=5)
+
+    # Maximum time allowed for one Groq API request, in seconds.
+    llm_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
+
+    # Maximum output tokens for structured Groq responses.
+    llm_structured_max_completion_tokens: int = Field(
+        default=2048,
+        ge=256,
+        le=4096,
+    )
+
+    # Initial and maximum delays between retry attempts, in seconds.
+    llm_retry_base_delay_seconds: float = Field(default=1.0, gt=0, le=30)
+    llm_retry_max_delay_seconds: float = Field(default=8.0, gt=0, le=60)
 
 
 @lru_cache(maxsize=1)

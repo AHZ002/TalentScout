@@ -26,7 +26,5 @@ class JobRepository:
 
     async def list_all(self) -> list[Job]:
         """Return hiring jobs, newest first."""
-        result = await self.session.execute(
-            select(Job).order_by(Job.created_at.desc())
-        )
+        result = await self.session.execute(select(Job).order_by(Job.created_at.desc()))
         return list(result.scalars().all())
