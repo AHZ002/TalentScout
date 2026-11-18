@@ -65,7 +65,7 @@ class Settings(BaseSettings):
 
     # Maximum output tokens for structured Groq responses.
     llm_structured_max_completion_tokens: int = Field(
-        default=2048,
+        default=4096,
         ge=256,
         le=4096,
     )

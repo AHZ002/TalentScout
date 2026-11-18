@@ -29,6 +29,9 @@ class InterviewState(TypedDict, total=False):
     # Competencies addressed across completed interview turns.
     assessed_competencies: list[str]
 
+    # Competencies for which sufficient assessment evidence has been collected.
+    sufficiently_assessed_competencies: list[str]
+
     # Competencies that still need interview evidence.
     remaining_competencies: list[str]
 

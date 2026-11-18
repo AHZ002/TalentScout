@@ -51,7 +51,7 @@ async def evaluate_answer(
     state: InterviewState,
     answer_evaluation_agent: AnswerEvaluationAgent,
 ) -> InterviewState:
-    """Evaluate the answer and update interview progress."""
+    """Evaluate the answer and update evidence-based interview progress."""
     question = state.get("current_question")
     if question is None:
         raise ValueError("Cannot evaluate a candidate answer without a current question.")
@@ -61,22 +61,22 @@ async def evaluate_answer(
 
     role_competencies = state["role_competency_analysis"].competencies
     competency_names = [competency.name for competency in role_competencies]
+    valid_competencies = set(competency_names)
 
-    # Collect competencies already addressed by previous completed answers.
-    previously_assessed = sorted(
-        {
-            competency
-            for turn in interview_history
-            for competency in turn["evaluation"].assessed_competencies
-        }
-    )
+    previously_assessed = {
+        competency
+        for turn in interview_history
+        for competency in turn["evaluation"].assessed_competencies
+    }
 
-    previously_assessed_set = set(previously_assessed)
+    previously_sufficiently_assessed = {
+        competency
+        for turn in interview_history
+        for competency in turn["evaluation"].sufficiently_assessed_competencies
+    }
 
-    # Calculate the competencies that still need evidence before evaluating
-    # the current answer.
     remaining_before_evaluation = [
-        name for name in competency_names if name not in previously_assessed_set
+        name for name in competency_names if name not in previously_sufficiently_assessed
     ]
 
     evaluation = await answer_evaluation_agent.evaluate(
@@ -85,12 +85,34 @@ async def evaluate_answer(
             candidate_answer=state["candidate_answer"],
             role_competency_analysis=state["role_competency_analysis"],
             turn_number=turn_number,
-            previously_assessed_competencies=previously_assessed,
+            previously_assessed_competencies=sorted(previously_assessed),
+            previously_sufficiently_assessed_competencies=sorted(previously_sufficiently_assessed),
             remaining_competencies=remaining_before_evaluation,
         )
     )
 
-    # The answer is now a completed interview turn because it has been evaluated.
+    # Reject competency names that do not belong to the role analysis.
+    unknown_competencies = (
+        set(evaluation.assessed_competencies) | set(evaluation.sufficiently_assessed_competencies)
+    ) - valid_competencies
+
+    if unknown_competencies:
+        raise ValueError(
+            f"Answer evaluation returned unknown competencies: {sorted(unknown_competencies)}"
+        )
+
+    # Sufficiently assessed competencies must also have been addressed.
+    invalid_sufficient_competencies = set(evaluation.sufficiently_assessed_competencies) - set(
+        evaluation.assessed_competencies
+    )
+
+    if invalid_sufficient_competencies:
+        raise ValueError(
+            "Sufficiently assessed competencies must also be addressed "
+            f"by the answer: {sorted(invalid_sufficient_competencies)}"
+        )
+
+    # Preserve the complete question, answer, and evaluation.
     interview_history.append(
         {
             "question": question,
@@ -99,30 +121,31 @@ async def evaluate_answer(
         }
     )
 
-    # Include competencies addressed by the current answer.
-    assessed_after_evaluation = sorted(
-        previously_assessed_set | set(evaluation.assessed_competencies)
+    assessed_after_evaluation = sorted(previously_assessed | set(evaluation.assessed_competencies))
+
+    sufficiently_assessed_after_evaluation = sorted(
+        previously_sufficiently_assessed | set(evaluation.sufficiently_assessed_competencies)
     )
 
-    assessed_after_set = set(assessed_after_evaluation)
+    sufficiently_assessed_set = set(sufficiently_assessed_after_evaluation)
 
     remaining_after_evaluation = [
-        name for name in competency_names if name not in assessed_after_set
+        name for name in competency_names if name not in sufficiently_assessed_set
     ]
 
-    # The evaluator decides whether enough evidence has been collected.
-    # Competency coverage alone must not end the interview because an
-    # already-assessed competency can still contain unresolved gaps.
-    # The turn limit remains a hard safety boundary.
+    # Completion requires both the evaluator's recommendation and sufficient
+    # evidence for every required competency. The turn limit remains a
+    # deterministic safety boundary.
     interview_complete = (
-        evaluation.next_action is InterviewDecision.COMPLETE or turn_number >= MAX_INTERVIEW_TURNS
-    )
+        evaluation.next_action is InterviewDecision.COMPLETE and not remaining_after_evaluation
+    ) or turn_number >= MAX_INTERVIEW_TURNS
 
     return {
         **state,
         "answer_evaluation": evaluation,
         "interview_history": interview_history,
         "assessed_competencies": assessed_after_evaluation,
+        "sufficiently_assessed_competencies": sufficiently_assessed_after_evaluation,
         "remaining_competencies": remaining_after_evaluation,
         "interview_complete": interview_complete,
     }

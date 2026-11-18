@@ -103,11 +103,21 @@ class FakeAnswerEvaluationAgent(AnswerEvaluationAgent):
         self,
         next_action: InterviewDecision = InterviewDecision.CONTINUE,
         assessed_competencies: list[str] | None = None,
+        sufficiently_assessed_competencies: list[str] | None = None,
     ) -> None:
         """Initialize the fake evaluator and call tracking."""
         self.call_count = 0
         self.next_action = next_action
-        self.assessed_competencies = assessed_competencies or ["Python backend development"]
+
+        self.assessed_competencies = (
+            assessed_competencies if assessed_competencies is not None else ["API resilience"]
+        )
+
+        self.sufficiently_assessed_competencies = (
+            sufficiently_assessed_competencies
+            if sufficiently_assessed_competencies is not None
+            else self.assessed_competencies.copy()
+        )
 
     async def evaluate(self, request) -> AnswerEvaluation:
         """Return a deterministic answer evaluation."""
@@ -117,11 +127,12 @@ class FakeAnswerEvaluationAgent(AnswerEvaluationAgent):
             correctness=EvaluationLevel.STRONG,
             depth=EvaluationLevel.ADEQUATE,
             reasoning=EvaluationLevel.STRONG,
-            demonstrated_competencies=["Python backend development"],
+            demonstrated_competencies=["API resilience"],
             strengths=["Clear architecture reasoning."],
             gaps=["Error handling was not discussed."],
             evidence=["Candidate described separating API and service layers."],
             assessed_competencies=self.assessed_competencies,
+            sufficiently_assessed_competencies=self.sufficiently_assessed_competencies,
             next_action=self.next_action,
             decision_reason="Deterministic test routing decision.",
             confidence=0.9,
@@ -280,8 +291,9 @@ async def test_interview_graph_handles_initial_and_follow_up_turns() -> None:
     assert llm.call_count == 2
     assert evaluation_agent.call_count == 1
     assert second_result["interview_complete"] is False
-    assert second_result["assessed_competencies"] == ["Python backend development"]
-    assert second_result["remaining_competencies"] == ["API resilience"]
+    assert second_result["assessed_competencies"] == ["API resilience"]
+    assert second_result["sufficiently_assessed_competencies"] == ["API resilience"]
+    assert second_result["remaining_competencies"] == []
 
     assert second_result["answer_evaluation"].correctness is (EvaluationLevel.STRONG)
 
@@ -415,3 +427,49 @@ async def test_interview_graph_continues_when_all_competencies_are_assessed() ->
 
     # A final report must not be generated while the evaluator says CONTINUE.
     assert report_agent.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_interview_graph_rejects_early_completion_with_insufficient_evidence() -> None:
+    """A COMPLETE recommendation cannot bypass unresolved competency evidence."""
+    role_agent = FakeRoleCompetencyAgent()
+    evaluation_agent = FakeAnswerEvaluationAgent(
+        next_action=InterviewDecision.COMPLETE,
+        assessed_competencies=["API resilience"],
+        sufficiently_assessed_competencies=[],
+    )
+    report_agent = FakeAssessmentReportAgent()
+    retriever = FakeRetriever()
+    llm = FakeLLM()
+
+    graph = build_interview_graph(
+        retriever=retriever,
+        llm=llm,
+        role_competency_agent=role_agent,
+        answer_evaluation_agent=evaluation_agent,
+        assessment_report_agent=report_agent,
+    )
+
+    initial_state: InterviewState = {
+        "job_id": uuid4(),
+        "job_description": "Build backend services using Python and FastAPI.",
+    }
+
+    first_result = await graph.ainvoke(initial_state)
+
+    result = await graph.ainvoke(
+        {
+            **first_result,
+            "candidate_answer": (
+                "I would use a layered architecture, but I have not "
+                "explained error handling or resilience."
+            ),
+        }
+    )
+
+    assert result["interview_complete"] is False
+    assert result["assessed_competencies"] == ["API resilience"]
+    assert result["sufficiently_assessed_competencies"] == []
+    assert result["remaining_competencies"] == ["API resilience"]
+    assert report_agent.call_count == 0
+    assert llm.call_count == 2

@@ -12,6 +12,7 @@ Requires your configured database and backend .env.
 
 Terminal 2 — Frontend
 cd frontend
+npm run build
 npm run dev
 
 

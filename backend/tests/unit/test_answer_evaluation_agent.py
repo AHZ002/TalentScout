@@ -45,6 +45,7 @@ class FakeLLM:
             gaps=["Did not discuss error handling."],
             evidence=["Candidate described separating API, service, and repository layers."],
             assessed_competencies=["Python backend development"],
+            sufficiently_assessed_competencies=["Python backend development"],
             next_action=InterviewDecision.CONTINUE,
             decision_reason="Further evidence is needed on error handling.",
             confidence=0.9,
@@ -87,6 +88,7 @@ async def test_answer_evaluation_agent_returns_structured_evaluation() -> None:
             role_competency_analysis=role_analysis,
             turn_number=1,
             previously_assessed_competencies=[],
+            previously_sufficiently_assessed_competencies=[],
             remaining_competencies=["Python backend development"],
         )
     )
@@ -96,5 +98,6 @@ async def test_answer_evaluation_agent_returns_structured_evaluation() -> None:
     assert result.correctness is EvaluationLevel.STRONG
     assert result.demonstrated_competencies == ["Python backend development"]
     assert result.assessed_competencies == ["Python backend development"]
+    assert result.sufficiently_assessed_competencies == ["Python backend development"]
     assert result.next_action is InterviewDecision.CONTINUE
     assert result.confidence == 0.9
