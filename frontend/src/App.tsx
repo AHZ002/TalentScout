@@ -6,13 +6,141 @@
  */
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, type GuidanceDocument, type InterviewSession, type Job } from "./api";
+import {
+  api,
+  type AssessmentReport,
+  type GuidanceDocument,
+  type InterviewSession,
+  type Job,
+} from "./api";
 import "./App.css";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An unexpected error occurred.";
 }
 
+
+function AssessmentList({
+  title,
+  items,
+  emptyMessage,
+}: {
+  title: string;
+  items: string[];
+  emptyMessage: string;
+}) {
+  return (
+    <section className="assessment-section">
+      <h3>{title}</h3>
+
+      {items.length > 0 ? (
+        <ul className="assessment-list">
+          {items.map((item, index) => (
+            <li key={`${index}-${item}`}>{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="assessment-empty">{emptyMessage}</p>
+      )}
+    </section>
+  );
+}
+
+function AssessmentReportView({ report }: { report: AssessmentReport }) {
+  const confidencePercent = Math.round(report.confidence * 100);
+
+  return (
+    <div className="assessment-report">
+      <header className="assessment-header">
+        <div>
+          <p className="eyebrow">ASSESSMENT REPORT</p>
+          <h2>Interview assessment</h2>
+        </div>
+
+        <div className="assessment-confidence">
+          <strong>{confidencePercent}%</strong>
+          <span>Assessment confidence</span>
+        </div>
+      </header>
+
+      <p className="assessment-summary">{report.overall_summary}</p>
+
+      <section className="assessment-section">
+        <h3>Competency breakdown</h3>
+
+        <div className="competency-grid">
+          {report.competency_assessments.map((assessment) => (
+            <article className="competency-card" key={assessment.name}>
+              <div className="competency-heading">
+                <h4>{assessment.name}</h4>
+
+                <span
+                  className={`rating-badge rating-${assessment.performance}`}
+                >
+                  {assessment.performance}
+                </span>
+              </div>
+
+              <div className="competency-evidence">
+                <div>
+                  <h5>Evidence</h5>
+
+                  {assessment.evidence.length > 0 ? (
+                    <ul className="assessment-list">
+                      {assessment.evidence.map((item, index) => (
+                        <li key={`${index}-${item}`}>{item}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="assessment-empty">
+                      No sufficient evidence recorded.
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <h5>Areas to improve</h5>
+
+                  {assessment.gaps.length > 0 ? (
+                    <ul className="assessment-list">
+                      {assessment.gaps.map((item, index) => (
+                        <li key={`${index}-${item}`}>{item}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="assessment-empty">
+                      No specific gaps recorded.
+                    </p>
+                  )}
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <div className="assessment-columns">
+        <AssessmentList
+          title="Strengths"
+          items={report.strengths}
+          emptyMessage="No strengths were recorded."
+        />
+
+        <AssessmentList
+          title="Overall gaps"
+          items={report.gaps}
+          emptyMessage="No overall gaps were recorded."
+        />
+
+        <AssessmentList
+          title="Recommended follow-ups"
+          items={report.follow_up_areas}
+          emptyMessage="No follow-up areas were identified."
+        />
+      </div>
+    </div>
+  );
+}
 
 function InterviewView({ sessionId }: { sessionId: string }) {
   const [session, setSession] = useState<InterviewSession | null>(null);
@@ -110,15 +238,15 @@ useEffect(() => {
                 <div className="completion-mark">✓</div>
                 <h1>Interview completed</h1>
                 <p className="muted">
-                  Your responses have been submitted. The assessment is available
-                  below when the backend has generated it.
+                  The interview is complete. Here is a summary of the assessment and
+                  the evidence collected during the interview.
                 </p>
                 {session.assessment_report ? (
-                  <pre className="report">
-                    {JSON.stringify(session.assessment_report, null, 2)}
-                  </pre>
+                  <AssessmentReportView report={session.assessment_report} />
                 ) : (
-                  <p className="muted">No assessment report was returned.</p>
+                  <div className="alert error">
+                    <p>The interview is complete, but no assessment report was returned.</p>
+                  </div>
                 )}
                 <a className="button secondary" href="#/">Back to TalentScout</a>
               </section>

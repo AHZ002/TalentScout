@@ -28,6 +28,28 @@ export interface GuidanceDocument {
   status: "processing" | "completed" | "failed";
 }
 
+export type EvaluationLevel =
+  | "strong"
+  | "adequate"
+  | "partial"
+  | "insufficient";
+
+export interface CompetencyAssessment {
+  name: string;
+  performance: EvaluationLevel;
+  evidence: string[];
+  gaps: string[];
+}
+
+export interface AssessmentReport {
+  overall_summary: string;
+  competency_assessments: CompetencyAssessment[];
+  strengths: string[];
+  gaps: string[];
+  follow_up_areas: string[];
+  confidence: number;
+}
+
 export interface InterviewSession {
   id: string;
   job_id: string;
@@ -35,7 +57,7 @@ export interface InterviewSession {
   current_question: string | null;
   interview_complete: boolean;
   turn_count: number;
-  assessment_report: unknown | null;
+  assessment_report: AssessmentReport | null;
 }
 
 // -----------------------------------------------------------------------------

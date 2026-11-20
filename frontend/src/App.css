@@ -581,19 +581,188 @@ textarea {
   letter-spacing: -0.04em;
 }
 
-.report {
-  max-height: 450px;
-  overflow: auto;
-  margin: 24px 0;
+/* Structured interview assessment */
+
+.assessment-report {
+  display: grid;
+  gap: 24px;
+  margin-top: 30px;
+  text-align: left;
+}
+
+.assessment-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.assessment-header h2 {
+  margin: 0;
+  font-size: 1.45rem;
+  letter-spacing: -0.04em;
+}
+
+.assessment-confidence {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 3px;
+  text-align: right;
+}
+
+.assessment-confidence strong {
+  font-size: 1.5rem;
+  letter-spacing: -0.04em;
+}
+
+.assessment-confidence span {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.assessment-summary {
+  margin: 0;
   padding: 18px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--background);
+  background: var(--soft);
   color: var(--text);
-  font-size: 0.78rem;
+  font-size: 0.9rem;
+  line-height: 1.7;
   text-align: left;
-  white-space: pre-wrap;
+}
+
+.assessment-section {
+  min-width: 0;
+}
+
+.assessment-section h3 {
+  margin: 0 0 13px;
+  font-size: 1rem;
+  letter-spacing: -0.025em;
+}
+
+.competency-grid {
+  display: grid;
+  gap: 13px;
+}
+
+.competency-card {
+  min-width: 0;
+  padding: 17px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--background);
+}
+
+.competency-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 17px;
+}
+
+.competency-heading h4 {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+.rating-badge {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.rating-strong {
+  background: #e8f6ed;
+  color: #18794e;
+}
+
+.rating-adequate {
+  background: #eaf1ff;
+  color: #2457a6;
+}
+
+.rating-partial {
+  background: #fff4df;
+  color: #9a6100;
+}
+
+.rating-insufficient {
+  background: #fff0f0;
+  color: #b42318;
+}
+
+.competency-evidence {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.competency-evidence h5 {
+  margin: 0 0 9px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.assessment-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.assessment-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.assessment-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.assessment-columns .assessment-section {
+  min-width: 0;
+}
+
+@media (max-width: 650px) {
+  .assessment-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .assessment-header {
+    align-items: flex-start;
+  }
+
+  .competency-evidence {
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
+
+  .competency-card {
+    padding: 14px;
+  }
 }
 
 @media (max-width: 850px) {
